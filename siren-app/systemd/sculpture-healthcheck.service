@@ -1,0 +1,12 @@
+[Unit]
+Description=Sculpture Health Check
+
+[Service]
+Type=oneshot
+User=admin
+Group=audio
+WorkingDirectory=/opt/sculpture
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sculpture/siren-app
+Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
+ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.healthcheck

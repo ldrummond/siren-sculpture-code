@@ -1,0 +1,5 @@
+# Generated for sculpture-audio-controller
+# Replace CARD_NUMBER with the detected USB DAC card number.
+
+defaults.pcm.card CARD_NUMBER
+defaults.ctl.card CARD_NUMBER

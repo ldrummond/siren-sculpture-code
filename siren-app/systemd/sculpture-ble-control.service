@@ -1,0 +1,16 @@
+[Unit]
+Description=Sculpture BLE Audio Control Service
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+WorkingDirectory=/opt/sculpture
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sculpture/siren-app
+Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
+ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.ble_control
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

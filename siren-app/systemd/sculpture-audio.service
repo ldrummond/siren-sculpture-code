@@ -1,0 +1,18 @@
+[Unit]
+Description=Sculpture Audio Playback Service
+After=sound.target
+Wants=sound.target
+
+[Service]
+User=admin
+Group=audio
+WorkingDirectory=/opt/sculpture
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sculpture/siren-app
+Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
+ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.player --autoplay
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

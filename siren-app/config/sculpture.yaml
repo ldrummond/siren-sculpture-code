@@ -1,0 +1,52 @@
+project:
+  name: "public-sculpture-audio"
+  location: "Denver"
+
+paths:
+  app_dir: "/opt/sculpture"
+  audio_dir: "/opt/sculpture/siren-app/assets/audio"
+  log_dir: "/var/log/sculpture"
+
+runtime:
+  user: "admin"
+  group: "audio"
+
+audio:
+  file: "/opt/sculpture/siren-app/assets/audio/ambient.wav"
+  loop: true
+  volume_percent: 80
+  player: "mpv"
+  extra_args:
+    - "--no-video"
+    - "--really-quiet"
+
+schedule:
+  start_time: "07:30"
+  stop_time: "19:30"
+  timezone: "America/Denver"
+  use_app_schedule_guard: true
+
+logging:
+  level: "INFO"
+  file: "/var/log/sculpture/sculpture.log"
+  max_mb: 10
+  backups: 5
+
+wittypi:
+  enabled: true
+  software_dir: "/home/admin/wittypi"
+  schedule_file: "/opt/sculpture/siren-app/config/wittypi/schedule.wpi"
+  low_voltage_shutdown: true
+
+healthcheck:
+  disk_free_warn_mb: 500
+  clock_drift_warn_seconds: 120
+  restart_audio_if_crashed: true
+
+ble:
+  control:
+    enabled: true
+    device_name: "SculptureControl"
+    service_uuid: "9f0d0101-7b6d-4d2c-9f4f-6f70726f7601"
+    command_characteristic_uuid: "9f0d0102-7b6d-4d2c-9f4f-6f70726f7601"
+    status_characteristic_uuid: "9f0d0103-7b6d-4d2c-9f4f-6f70726f7601"

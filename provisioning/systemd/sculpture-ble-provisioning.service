@@ -1,0 +1,16 @@
+[Unit]
+Description=Sculpture BLE Network Provisioning Service
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+WorkingDirectory=/opt/sculpture
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sculpture/provisioning
+Environment=PROVISIONING_CONFIG=/opt/sculpture/provisioning/settings/provisioning.yaml
+ExecStart=/opt/sculpture/.venv/bin/python -m provisioning_core.ble_service
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

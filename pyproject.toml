@@ -1,0 +1,19 @@
+[project]
+name = "sculpture-audio-controller"
+version = "0.1.0"
+description = "Raspberry Pi audio controller for a public sculpture installation"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML",
+    "psutil",
+    "bless",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "siren-app", "provisioning"]
