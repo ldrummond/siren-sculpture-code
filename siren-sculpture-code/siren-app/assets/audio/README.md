@@ -3,13 +3,13 @@
 Place the main ambient audio file here:
 
 ```text
-/opt/sculpture/siren-app/assets/audio/ambient.wav
+/opt/sculpture/siren-app/assets/audio/siren-5.wav
 ```
 
 The default config expects:
 
 ```text
-/opt/sculpture/siren-app/assets/audio/ambient.wav
+/opt/sculpture/siren-app/assets/audio/siren-5.wav
 ```
 
 Large audio files are not committed to Git by default.

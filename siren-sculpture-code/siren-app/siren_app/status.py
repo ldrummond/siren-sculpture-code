@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - psutil is optional at runtime.
     psutil = None
 
 from siren_app.config import AppConfig
-from siren_app.player import AudioPlayer, read_published_status
+from siren_app.player import AudioPlayer, read_playback_window, read_published_status
 from siren_app.wittypi import get_wittypi_status
 
 
@@ -47,6 +47,7 @@ def _audio_file_status(config: AppConfig) -> dict[str, Any]:
     if published and published.get("file") == str(path):
         published["file_exists"] = exists
         published["file_size_mb"] = round(path.stat().st_size / 1024 / 1024, 1) if exists else None
+        published.setdefault("playback_window", read_playback_window(config))
         return published
     return {
         "state": "unknown",
@@ -55,6 +56,7 @@ def _audio_file_status(config: AppConfig) -> dict[str, Any]:
         "file_size_mb": round(path.stat().st_size / 1024 / 1024, 1) if exists else None,
         "loop": bool(config.get("audio.loop", True)),
         "error": None if exists else f"Audio file does not exist: {path}",
+        "playback_window": read_playback_window(config),
     }
 
 

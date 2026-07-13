@@ -5,29 +5,166 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sculpture BLE Control</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f7f7f2; color: #1c2420; }
-    main { max-width: 720px; margin: 0 auto; padding: 20px; }
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f2;
+      --text: #1c2420;
+      --muted: #5d6861;
+      --line: #d6d8ce;
+      --primary: #174135;
+      --primary-soft: #dce9e3;
+      --manual: #7c3f16;
+      --manual-soft: #f5e3d4;
+      --error: #9f1d20;
+      --error-soft: #f7dcdc;
+      --panel: #ffffff;
+      --code: #151816;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 20px; }
     h1 { font-size: 1.5rem; margin: 0 0 12px; }
-    section { border-top: 1px solid #d6d8ce; padding: 16px 0; }
-    button { min-height: 44px; border: 0; border-radius: 6px; padding: 0 14px; background: #174135; color: white; font: inherit; cursor: pointer; }
-    button.secondary { background: white; color: #174135; border: 1px solid #174135; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
-    pre { white-space: pre-wrap; background: #151816; color: #e9efe9; border-radius: 6px; padding: 12px; overflow-x: auto; }
+    section { border-top: 1px solid var(--line); padding: 16px 0; }
+    button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: var(--primary);
+      color: white;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary { background: white; color: var(--primary); border: 1px solid var(--primary); }
+    button.danger { background: var(--error); }
+    button:disabled { cursor: wait; opacity: 0.58; }
+    input[type="range"] { width: 100%; accent-color: var(--primary); }
+    input[type="time"] { min-height: 44px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; font: inherit; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .inline-field { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+    #controls .row + .row { margin-top: 8px; }
+    [hidden] { display: none !important; }
+    .status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .status-card {
+      min-height: 76px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 10px 12px;
+    }
+    .label { display: block; color: var(--muted); font-size: 0.78rem; margin-bottom: 5px; }
+    .value { display: block; font-weight: 650; overflow-wrap: anywhere; }
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-weight: 700;
+    }
+    .mode-badge.manual { background: var(--manual-soft); color: var(--manual); }
+    .mode-badge.error { background: var(--error-soft); color: var(--error); }
+    .activity { min-height: 28px; color: var(--muted); }
+    .busy .activity { color: var(--primary); font-weight: 650; }
+    .spinner {
+      display: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--line);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .busy .spinner { display: inline-block; }
+    pre {
+      white-space: pre-wrap;
+      background: var(--code);
+      color: #e9efe9;
+      border-radius: 6px;
+      padding: 12px;
+      overflow-x: auto;
+      min-height: 120px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 640px) {
+      main { padding: 16px; }
+      .status-grid { grid-template-columns: 1fr; }
+      button { flex: 1 1 calc(50% - 8px); }
+    }
   </style>
 </head>
 <body>
 <main>
   <h1>Sculpture BLE Control</h1>
-  <section class="row">
-    <button onclick="connectBle()">Connect</button>
-    <button onclick="sendCommand('play')">Play</button>
-    <button onclick="sendCommand('pause')">Pause</button>
-    <button onclick="sendCommand('stop')">Stop</button>
-    <button onclick="sendCommand('restart')">Restart</button>
-    <button class="secondary" onclick="sendCommand('resume_normal')">Resume Normal</button>
-    <button class="secondary" onclick="sendCommand('status')">Status</button>
+
+  <section class="status-grid" aria-live="polite">
+    <div class="status-card">
+      <span class="label">Connection</span>
+      <span class="value" id="connectionStatus">Not connected</span>
+    </div>
+    <div class="status-card">
+      <span class="label">System Mode</span>
+      <span class="mode-badge" id="modeStatus">Unknown</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Playback</span>
+      <span class="value" id="playbackStatus">Unknown</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Device Time</span>
+      <span class="value" id="deviceTimeStatus">Unknown</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Temperature</span>
+      <span class="value" id="temperatureStatus">Unknown</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Volume</span>
+      <input id="volumeControl" type="range" min="0" max="100" step="1" value="80" oninput="previewVolume()" onchange="setVolume()">
+      <span class="value" id="volumeStatus">80%</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Play Audio Within</span>
+      <span class="value" id="playbackWindowStatus">No range set</span>
+    </div>
   </section>
-  <pre id="output"></pre>
+
+  <section id="controls">
+    <div class="row">
+      <button data-action="connect" onclick="connectBle()">Connect</button>
+      <button class="secondary" id="modeToggle" data-action="mode_toggle" onclick="switchControlMode()">Switch Mode</button>
+      <button class="secondary" data-action="status" onclick="refreshStatus()">Status</button>
+      <button class="secondary" data-action="diagnostics" onclick="sendCommand('diagnostics')">Diagnostics</button>
+      <button class="danger" data-action="reboot" onclick="rebootDevice()">Reboot</button>
+    </div>
+    <div class="row" id="sculptureControls">
+      <button data-action="play_sculpture" onclick="sendCommand('play_sculpture')">Play Sculpture</button>
+      <button class="secondary" data-action="pause_sculpture" onclick="sendCommand('pause_sculpture')">Pause Sculpture</button>
+      <label class="inline-field">Play Audio within <input id="playbackStartTime" type="time"></label>
+      <label class="inline-field">to <input id="playbackStopTime" type="time"></label>
+      <button data-action="set_playback_window" onclick="setPlaybackWindow()">Save Range</button>
+      <button class="secondary" data-action="clear_playback_window" onclick="clearPlaybackWindow()">Clear Range</button>
+    </div>
+    <div class="row" id="testingControls" hidden>
+      <button data-action="test_play" onclick="sendCommand('test_play')">Play Test</button>
+      <button class="secondary" data-action="test_pause" onclick="sendCommand('test_pause')">Pause Test</button>
+      <button data-action="test_restart" onclick="sendCommand('test_restart')">Restart Test</button>
+    </div>
+  </section>
+
+  <section class="row" id="activityRow" aria-live="polite" aria-busy="false">
+    <span class="spinner" aria-hidden="true"></span>
+    <span class="activity" id="activityText">Idle</span>
+  </section>
+
+  <pre id="output">Connect to the sculpture to read status.</pre>
 </main>
 <script>
 const SERVICE_UUID = '9f0d0101-7b6d-4d2c-9f4f-6f70726f7601';
@@ -35,40 +172,325 @@ const COMMAND_UUID = '9f0d0102-7b6d-4d2c-9f4f-6f70726f7601';
 const STATUS_UUID = '9f0d0103-7b6d-4d2c-9f4f-6f70726f7601';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const STATUS_ACTIONS = new Set(['status', 'diagnostics', 'debug', 'logs', 'service_status', 'set_volume', 'volume', 'set_playback_window', 'clear_playback_window', 'reboot']);
+const ACTION_MODE_HINTS = {
+  testing_mode: 'testing',
+  enter_testing_mode: 'testing',
+  manual_mode: 'testing',
+  test_play: 'testing',
+  test_pause: 'testing',
+  test_restart: 'testing',
+  play: 'testing',
+  pause: 'testing',
+  restart: 'testing',
+  sculpture_mode: 'sculpture',
+  enter_sculpture_mode: 'sculpture',
+  normal_mode: 'sculpture',
+  play_sculpture: 'sculpture',
+  pause_sculpture: 'sculpture',
+  resume_normal: 'sculpture',
+  pause_normal: 'sculpture',
+  stop: 'sculpture'
+};
+let device;
 let commandCharacteristic;
 let statusCharacteristic;
+let pendingRequests = 0;
+let lastAction = null;
+let currentControlMode = 'unknown';
+
+function setBusy(isBusy, message = '') {
+  pendingRequests = Math.max(0, pendingRequests + (isBusy ? 1 : -1));
+  const busy = pendingRequests > 0;
+  document.getElementById('activityRow').classList.toggle('busy', busy);
+  document.getElementById('activityRow').setAttribute('aria-busy', String(busy));
+  document.getElementById('activityText').textContent = busy ? (message || 'Waiting for Pi response...') : 'Idle';
+  document.querySelectorAll('button').forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
+function setConnection(value) {
+  document.getElementById('connectionStatus').textContent = value;
+}
 
 function log(value) {
   document.getElementById('output').textContent =
     typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
-async function connectBle() {
-  if (!navigator.bluetooth) {
-    log('Web Bluetooth is not available in this browser. Use Chrome/Edge on Android or desktop over HTTPS.');
-    return;
-  }
-  const device = await navigator.bluetooth.requestDevice({
-    filters: [{ services: [SERVICE_UUID] }],
-    optionalServices: [SERVICE_UUID]
-  });
-  const server = await device.gatt.connect();
-  const service = await server.getPrimaryService(SERVICE_UUID);
-  commandCharacteristic = await service.getCharacteristic(COMMAND_UUID);
-  statusCharacteristic = await service.getCharacteristic(STATUS_UUID);
-  log(await readStatus());
+function onDisconnected() {
+  commandCharacteristic = undefined;
+  statusCharacteristic = undefined;
+  setConnection('Disconnected');
 }
 
-async function sendCommand(action) {
-  if (!commandCharacteristic) await connectBle();
-  await commandCharacteristic.writeValue(encoder.encode(JSON.stringify({ action })));
-  log(await readStatus());
+async function withBusy(message, task) {
+  setBusy(true, message);
+  try {
+    return await task();
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    updateMode({ error: messageText });
+    log({ ok: false, error: messageText });
+    throw error;
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    const message = 'Web Bluetooth is not available in this browser. Use Chrome/Edge on Android or desktop over HTTPS.';
+    updateMode({ error: message });
+    log(message);
+    return;
+  }
+
+  await withBusy('Connecting to Pi...', async () => {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: [SERVICE_UUID]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    commandCharacteristic = await service.getCharacteristic(COMMAND_UUID);
+    statusCharacteristic = await service.getCharacteristic(STATUS_UUID);
+    setConnection(device.name || 'Connected');
+    const status = await readStatus();
+    updateFromStatus(status);
+    log(status);
+  });
+}
+
+async function sendCommand(action, payload = {}) {
+  await ensureConnected();
+  await withBusy(`Sending ${formatAction(action)}...`, async () => {
+    await commandCharacteristic.writeValue(encoder.encode(JSON.stringify({ action, ...payload })));
+    if (action === 'diagnostics' || action === 'set_playback_window' || action === 'clear_playback_window') {
+      const response = await readCommandResponse();
+      if (response.playback_window) updatePlaybackWindowControls(response.playback_window, true);
+      log(response);
+      if (action !== 'diagnostics') {
+        window.setTimeout(() => refreshStatus().catch(() => {}), 5500);
+      }
+      return;
+    }
+    if (!STATUS_ACTIONS.has(action)) lastAction = action;
+    const status = await readStatus();
+    updateFromStatus(status);
+    log(status);
+  });
+}
+
+async function readCommandResponse() {
+  if (!commandCharacteristic) return { ok: false, error: 'Not connected' };
+  const value = await commandCharacteristic.readValue();
+  return parseJsonValue(value);
+}
+
+function previewVolume() {
+  const value = document.getElementById('volumeControl').value;
+  document.getElementById('volumeStatus').textContent = `${value}%`;
+}
+
+async function setVolume() {
+  const value = Number(document.getElementById('volumeControl').value);
+  await sendCommand('set_volume', { volume_percent: value });
+}
+
+async function setPlaybackWindow() {
+  const startTime = document.getElementById('playbackStartTime').value;
+  const stopTime = document.getElementById('playbackStopTime').value;
+  if (!startTime || !stopTime) {
+    log({ ok: false, error: 'Start and stop times are required.' });
+    return;
+  }
+  await sendCommand('set_playback_window', { start_time: startTime, stop_time: stopTime });
+}
+
+async function clearPlaybackWindow() {
+  await sendCommand('clear_playback_window');
+}
+
+async function switchControlMode() {
+  const action = currentControlMode === 'testing' ? 'sculpture_mode' : 'testing_mode';
+  await sendCommand(action);
+}
+
+async function rebootDevice() {
+  if (!window.confirm('Reboot this sculpture controller now?')) return;
+  await sendCommand('reboot');
+}
+
+async function refreshStatus() {
+  await ensureConnected();
+  await withBusy('Reading Pi status...', async () => {
+    const status = await readStatus();
+    updateFromStatus(status);
+    log(status);
+  });
+}
+
+async function ensureConnected() {
+  if (commandCharacteristic && statusCharacteristic) return;
+  await connectBle();
 }
 
 async function readStatus() {
-  if (!statusCharacteristic) return 'Not connected';
+  if (!statusCharacteristic) return { ok: false, error: 'Not connected' };
   const value = await statusCharacteristic.readValue();
-  return JSON.parse(decoder.decode(value));
+  return parseJsonValue(value);
+}
+
+function parseJsonValue(value) {
+  const raw = decoder.decode(value).replace(/\0+$/g, '').trim();
+  if (!raw) {
+    return { ok: false, error: 'Pi returned an empty BLE response', raw };
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      raw
+    };
+  }
+}
+
+function updateFromStatus(payload) {
+  if (payload && payload.ok === false && payload.error) {
+    updateMode({ error: payload.error });
+    return;
+  }
+  const status = payload && payload.status ? payload.status : payload;
+  const audio = status && status.audio ? status.audio : {};
+  const mode = getMode(audio, lastAction);
+
+  updateMode(mode);
+  if (lastAction && getActionMode(lastAction) === mode.kind) {
+    lastAction = null;
+  }
+  document.getElementById('playbackStatus').textContent = formatPlayback(audio, status);
+  updateDeviceStatus(status, audio);
+}
+
+function updateDeviceStatus(status, audio) {
+  const clock = status && status.clock ? status.clock : {};
+  const wittypi = status && status.wittypi ? status.wittypi : {};
+  document.getElementById('deviceTimeStatus').textContent = formatTime(clock.system_time || wittypi.rtc_time);
+  document.getElementById('temperatureStatus').textContent = formatTemperature(wittypi);
+  if (typeof audio.volume_percent === 'number') {
+    document.getElementById('volumeControl').value = String(audio.volume_percent);
+    document.getElementById('volumeStatus').textContent = `${audio.volume_percent}%`;
+  }
+  updatePlaybackWindowControls(audio.playback_window);
+}
+
+function updateMode(mode) {
+  const modeEl = document.getElementById('modeStatus');
+  modeEl.classList.remove('manual', 'error');
+  if (mode.error) {
+    modeEl.textContent = 'Error';
+    modeEl.classList.add('error');
+    document.getElementById('playbackStatus').textContent = mode.error;
+    return;
+  }
+  if (mode.kind === 'testing' || mode.kind === 'sculpture') {
+    currentControlMode = mode.kind;
+  }
+  modeEl.textContent = mode.label || 'Unknown';
+  if (mode.kind === 'testing') modeEl.classList.add('manual');
+  updateModeControls(mode.kind);
+}
+
+function updateModeControls(kind) {
+  const testing = kind === 'testing';
+  document.getElementById('sculptureControls').hidden = testing;
+  document.getElementById('testingControls').hidden = !testing;
+  document.getElementById('modeToggle').textContent = testing ? 'Switch to Sculpture Mode' : 'Switch to Testing Mode';
+}
+
+function updatePlaybackWindowControls(playbackWindow, pending = false) {
+  const startInput = document.getElementById('playbackStartTime');
+  const stopInput = document.getElementById('playbackStopTime');
+  if (playbackWindow && playbackWindow.enabled) {
+    if (playbackWindow.start_time) startInput.value = playbackWindow.start_time;
+    if (playbackWindow.stop_time) stopInput.value = playbackWindow.stop_time;
+  } else if (playbackWindow && playbackWindow.enabled === false) {
+    startInput.value = '';
+    stopInput.value = '';
+  }
+  document.getElementById('playbackWindowStatus').textContent = formatPlaybackWindow(playbackWindow, pending);
+}
+
+function getMode(audio, queued) {
+  const hintedMode = getActionMode(queued);
+  if (hintedMode === 'testing' || audio.control_mode === 'testing' || audio.manual_override || audio.manual_paused || audio.supervisor_mode === 'manual') {
+    return { kind: 'testing', label: 'Testing Mode' };
+  }
+  if (hintedMode === 'sculpture' || audio.control_mode === 'sculpture' || audio.normal_paused || audio.supervisor_mode === 'normal_paused' || audio.supervisor_mode === 'schedule') {
+    return { kind: 'sculpture', label: audio.normal_paused ? 'Sculpture Mode Paused' : 'Sculpture Mode' };
+  }
+  return { kind: 'unknown', label: 'Unknown' };
+}
+
+function getActionMode(action) {
+  if (!action) return null;
+  return ACTION_MODE_HINTS[String(action)] || null;
+}
+
+function formatPlayback(audio, status) {
+  if (audio.error) return audio.error;
+  if (audio.file_exists === false) return 'Audio file missing';
+  if (audio.control_mode === 'sculpture' || audio.normal_paused) {
+    if (!audio.playback_window || !audio.playback_window.enabled) return 'No playback range set';
+    if (audio.normal_paused) return 'Sculpture paused';
+    if (audio.playback_window.active === false) return 'Outside playback range';
+    if (audio.state === 'playing') return 'Sculpture playing';
+  }
+  if (audio.control_mode === 'testing' || audio.manual_override || audio.manual_paused) {
+    if (audio.manual_paused || audio.state === 'paused') return 'Test paused';
+    if (audio.state === 'playing') return 'Test playing';
+    if (audio.state === 'stopped') return 'Testing idle';
+  }
+  if (audio.state) {
+    const details = [capitalize(audio.state)];
+    if (status && status.clock && status.clock.clock_ok === false) details.push('clock warning');
+    return details.join(' - ');
+  }
+  return 'Unknown';
+}
+
+function formatTime(value) {
+  if (!value) return 'Unknown';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+function formatTemperature(wittypi) {
+  if (!wittypi || typeof wittypi.temperature_c !== 'number') return 'Unknown';
+  const c = wittypi.temperature_c.toFixed(1);
+  const f = typeof wittypi.temperature_f === 'number' ? wittypi.temperature_f.toFixed(1) : ((wittypi.temperature_c * 1.8) + 32).toFixed(1);
+  return `${c} C / ${f} F`;
+}
+
+function formatPlaybackWindow(playbackWindow, pending = false) {
+  if (!playbackWindow || !playbackWindow.enabled) return pending ? 'Range update queued' : 'No range set';
+  const activeText = playbackWindow.active ? 'active' : 'inactive';
+  const suffix = pending ? ' queued' : ` ${activeText}`;
+  return `${playbackWindow.start_time || '--:--'} to ${playbackWindow.stop_time || '--:--'}${suffix}`;
+}
+
+function formatAction(action) {
+  return action.replace(/_/g, ' ');
+}
+
+function capitalize(value) {
+  return String(value).charAt(0).toUpperCase() + String(value).slice(1);
 }
 </script>
 </body>

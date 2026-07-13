@@ -12,12 +12,13 @@ runtime:
   group: "audio"
 
 audio:
-  file: "/opt/sculpture/siren-app/assets/audio/ambient.wav"
+  file: "/opt/sculpture/siren-app/assets/audio/siren-5.wav"
   loop: true
   volume_percent: 80
   player: "mpv"
   extra_args:
     - "--no-video"
+    - "--ao=alsa"
     - "--really-quiet"
 
 schedule:
@@ -46,7 +47,8 @@ healthcheck:
 ble:
   control:
     enabled: true
-    device_name: "SculptureControl"
+    adapter: "hci0"
+    device_name: "device"
     service_uuid: "9f0d0101-7b6d-4d2c-9f4f-6f70726f7601"
     command_characteristic_uuid: "9f0d0102-7b6d-4d2c-9f4f-6f70726f7601"
     status_characteristic_uuid: "9f0d0103-7b6d-4d2c-9f4f-6f70726f7601"

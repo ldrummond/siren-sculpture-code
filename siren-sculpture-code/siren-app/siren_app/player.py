@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from siren_app.config import AppConfig, ConfigError, is_within_schedule, load_config
+from siren_app.config import AppConfig, ConfigError, _parse_time, is_within_schedule, load_config
 from siren_app.logging_config import setup_logging
 
 
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 COMMAND_FILE = Path(os.environ.get("SCULPTURE_COMMAND_FILE", "/tmp/sculpture-audio-controller/command"))
 STATUS_FILE = Path(os.environ.get("SCULPTURE_STATUS_FILE", "/tmp/sculpture-audio-controller/status.json"))
+PLAYBACK_WINDOW_FILE = Path(os.environ.get("SCULPTURE_PLAYBACK_WINDOW_FILE", "/var/lib/sculpture/playback-window.json"))
 
 
 @dataclass
@@ -29,6 +30,7 @@ class PlayerStatus:
     file_exists: bool
     file_size_mb: float | None
     loop: bool
+    volume_percent: int | None
     error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -38,8 +40,115 @@ class PlayerStatus:
             "file_exists": self.file_exists,
             "file_size_mb": self.file_size_mb,
             "loop": self.loop,
+            "volume_percent": self.volume_percent,
             "error": self.error,
         }
+
+
+
+def read_playback_window(config: AppConfig, now: Any | None = None) -> dict[str, Any]:
+    timezone = str(config.get("schedule.timezone", "UTC"))
+    window = {
+        "enabled": False,
+        "start_time": None,
+        "stop_time": None,
+        "timezone": timezone,
+        "active": False,
+        "error": None,
+    }
+    if not PLAYBACK_WINDOW_FILE.exists():
+        return window
+    try:
+        payload = json.loads(PLAYBACK_WINDOW_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        window["error"] = f"Unable to read playback window: {exc}"
+        return window
+    if not isinstance(payload, dict):
+        window["error"] = "Playback window file must contain a JSON object"
+        return window
+    window["enabled"] = bool(payload.get("enabled", False))
+    window["start_time"] = payload.get("start_time")
+    window["stop_time"] = payload.get("stop_time")
+    window["timezone"] = str(payload.get("timezone") or timezone)
+    if not window["enabled"]:
+        return window
+    try:
+        window["active"] = _is_time_in_range(
+            str(window["start_time"]),
+            str(window["stop_time"]),
+            str(window["timezone"]),
+            now,
+        )
+    except Exception as exc:
+        window["active"] = False
+        window["error"] = str(exc)
+    return window
+
+
+def write_playback_window(payload: dict[str, Any], config: AppConfig) -> dict[str, Any]:
+    if not payload.get("enabled", True):
+        window = {
+            "enabled": False,
+            "start_time": None,
+            "stop_time": None,
+            "timezone": str(config.get("schedule.timezone", "UTC")),
+        }
+    else:
+        start_time = _validate_time_string(payload.get("start_time"), "start_time")
+        stop_time = _validate_time_string(payload.get("stop_time"), "stop_time")
+        timezone = str(payload.get("timezone") or config.get("schedule.timezone", "UTC"))
+        _validate_timezone_name(timezone)
+        window = {
+            "enabled": True,
+            "start_time": start_time,
+            "stop_time": stop_time,
+            "timezone": timezone,
+        }
+    PLAYBACK_WINDOW_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PLAYBACK_WINDOW_FILE.write_text(json.dumps(window, indent=2, sort_keys=True), encoding="utf-8")
+    return read_playback_window(config)
+
+
+def playback_window_command(payload: dict[str, Any]) -> str:
+    return "playback_window:" + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _validate_time_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
+    try:
+        parsed = _parse_time(value.strip())
+    except Exception as exc:
+        raise ValueError(f"{field_name} must be HH:MM") from exc
+    return parsed.strftime("%H:%M")
+
+
+def _validate_timezone_name(timezone_name: str) -> None:
+    from zoneinfo import ZoneInfo
+
+    try:
+        ZoneInfo(timezone_name)
+    except Exception as exc:
+        raise ValueError(f"Invalid timezone: {timezone_name}") from exc
+
+
+def _is_time_in_range(start_time: str, stop_time: str, timezone_name: str, now: Any | None = None) -> bool:
+    from zoneinfo import ZoneInfo
+
+    timezone = ZoneInfo(timezone_name)
+    current = now.astimezone(timezone) if now else time_datetime_now(timezone)
+    start = _parse_time(start_time)
+    stop = _parse_time(stop_time)
+    current_time = current.time()
+    if start <= stop:
+        return start <= current_time < stop
+    return current_time >= start or current_time < stop
+
+
+def time_datetime_now(timezone: Any) -> Any:
+    from datetime import datetime
+
+    return datetime.now(timezone)
 
 
 class AudioPlayer:
@@ -48,6 +157,8 @@ class AudioPlayer:
         self.process: subprocess.Popen[bytes] | None = None
         self.last_error: str | None = None
         self._paused = False
+        configured_volume = config.get("audio.volume_percent")
+        self.volume_percent = int(configured_volume) if configured_volume is not None else None
 
     @property
     def audio_file(self) -> Path:
@@ -58,9 +169,8 @@ class AudioPlayer:
         command.extend(str(arg) for arg in self.config.get("audio.extra_args", []) or [])
         if self.config.get("audio.loop", True) and not any(str(arg).startswith("--loop-file") for arg in command):
             command.append("--loop-file=inf")
-        volume = self.config.get("audio.volume_percent")
-        if volume is not None:
-            command.append(f"--volume={int(volume)}")
+        if self.volume_percent is not None:
+            command.append(f"--volume={int(self.volume_percent)}")
         command.append(str(self.audio_file))
         return command
 
@@ -124,6 +234,16 @@ class AudioPlayer:
         self.stop()
         return self.start()
 
+    def set_volume(self, volume_percent: int) -> bool:
+        volume = max(0, min(100, int(volume_percent)))
+        if volume == self.volume_percent:
+            return True
+        self.volume_percent = volume
+        logger.info("Setting playback volume to %s%%", volume)
+        if self.is_running():
+            return self.restart()
+        return True
+
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
@@ -156,6 +276,7 @@ class AudioPlayer:
             file_exists=file_exists,
             file_size_mb=file_size_mb,
             loop=bool(self.config.get("audio.loop", True)),
+            volume_percent=self.volume_percent,
             error=self.last_error,
         )
 
@@ -180,6 +301,7 @@ def run_autoplay() -> int:
     stopping = False
     manual_override = False
     manual_paused = False
+    normal_paused = False
     COMMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -197,45 +319,81 @@ def run_autoplay() -> int:
         command = _read_command()
         if command:
             logger.info("Received audio command: %s", command)
-            if command == "play":
-                manual_override = True
-                manual_paused = False
-                player.resume()
-            elif command == "pause":
+            if command in {"testing_mode", "enter_testing_mode"}:
                 manual_override = True
                 manual_paused = True
-                player.pause()
-            elif command == "stop":
+                normal_paused = False
+                logger.info("Entering testing mode")
+                player.stop()
+            elif command in {"sculpture_mode", "enter_sculpture_mode"}:
                 manual_override = False
                 manual_paused = False
-                player.stop()
-            elif command == "restart":
+                normal_paused = False
+                logger.info("Entering sculpture mode")
+            elif command in {"play", "test_play"}:
                 manual_override = True
                 manual_paused = False
-                player.restart()
-            elif command == "resume_normal":
+                normal_paused = False
+                player.resume()
+            elif command in {"pause", "test_pause"}:
+                manual_override = True
+                manual_paused = True
+                normal_paused = False
+                player.pause()
+            elif command in {"pause_normal", "pause_sculpture", "stop"}:
                 manual_override = False
                 manual_paused = False
-                logger.info("Resuming normal schedule-guarded playback")
+                normal_paused = True
+                player.stop()
+            elif command in {"restart", "test_restart"}:
+                manual_override = True
+                manual_paused = False
+                normal_paused = False
+                player.restart()
+            elif command in {"resume_normal", "play_sculpture"}:
+                manual_override = False
+                manual_paused = False
+                normal_paused = False
+                logger.info("Resuming sculpture mode playback")
+            elif command.startswith("volume:"):
+                try:
+                    player.set_volume(int(command.split(":", 1)[1]))
+                except ValueError:
+                    logger.warning("Ignoring invalid volume command: %s", command)
+            elif command.startswith("playback_window:"):
+                try:
+                    payload = json.loads(command.split(":", 1)[1])
+                    if not isinstance(payload, dict):
+                        raise ValueError("playback window payload must be an object")
+                    write_playback_window(payload, config)
+                except (json.JSONDecodeError, OSError, ValueError) as exc:
+                    logger.warning("Ignoring invalid playback window command: %s", exc)
             else:
                 logger.warning("Ignoring unknown audio command: %s", command)
 
         guard_enabled = bool(config.get("schedule.use_app_schedule_guard", True))
-        active = is_within_schedule(config) if guard_enabled else True
+        config_schedule_active = is_within_schedule(config) if guard_enabled else True
+        playback_window = read_playback_window(config)
+        sculpture_window_active = bool(playback_window.get("enabled")) and bool(playback_window.get("active"))
+        active = sculpture_window_active
         player.check_process()
 
-        if (active or manual_override) and not manual_paused:
+        if not normal_paused and (active or manual_override) and not manual_paused:
             if not player.is_running():
                 player.start()
         else:
             if player.is_running():
-                logger.info("Outside active schedule; stopping playback")
+                logger.info("Playback is paused or outside active schedule; stopping playback")
                 player.stop()
 
         status = player.status().as_dict()
         status["manual_override"] = manual_override
         status["manual_paused"] = manual_paused
-        status["supervisor_mode"] = "manual" if manual_override else "schedule"
+        status["normal_paused"] = normal_paused
+        status["control_mode"] = "testing" if manual_override or manual_paused else "sculpture"
+        status["supervisor_mode"] = "manual" if manual_override else "normal_paused" if normal_paused else "schedule"
+        status["playback_window"] = playback_window
+        status["config_schedule_active"] = config_schedule_active
         _write_status(status)
         time.sleep(5)
 
@@ -245,7 +403,24 @@ def run_autoplay() -> int:
 
 
 def queue_command(command: str) -> None:
-    if command not in {"play", "pause", "stop", "restart", "resume_normal"}:
+    allowed_commands = {
+        "play",
+        "pause",
+        "stop",
+        "restart",
+        "resume_normal",
+        "pause_normal",
+        "testing_mode",
+        "enter_testing_mode",
+        "sculpture_mode",
+        "enter_sculpture_mode",
+        "test_play",
+        "test_pause",
+        "test_restart",
+        "play_sculpture",
+        "pause_sculpture",
+    }
+    if command not in allowed_commands and not command.startswith("volume:") and not command.startswith("playback_window:"):
         raise ValueError(f"Unsupported audio command: {command}")
     COMMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
     COMMAND_FILE.write_text(command + "\n", encoding="utf-8")

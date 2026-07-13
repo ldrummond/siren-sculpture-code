@@ -1,6 +1,6 @@
 # Sculpture Audio Controller
 
-Raspberry Pi audio controller for a public, solar-powered sculpture installation. The app plays a long ambient audio file through a USB DAC, starts automatically after power loss, exposes BLE provisioning/control services, and includes scripts for repeatable Pi installation.
+Raspberry Pi audio controller for a public, solar-powered sculpture installation. The app plays a long audio file through a USB DAC, starts automatically after power loss, exposes a BLE control service, and includes scripts for repeatable Pi installation.
 
 ## Target Hardware
 
@@ -14,10 +14,10 @@ Raspberry Pi audio controller for a public, solar-powered sculpture installation
 ## Project Layout
 
 - `siren-app/`: siren-specific audio controller, audio assets, config, scripts, and `systemd` units.
-- `provisioning/`: reusable BLE Wi-Fi provisioning module, config, scripts, and `systemd` units.
-- `scripts/`: root orchestration only, such as install, deploy, Raspberry Pi Connect setup, and release helpers.
-- `config/`: shared host-level config that is not owned by a component, currently log rotation.
-- `web-bluetooth/`: standalone Web Bluetooth pages to host on your own web server, not on the Pi.
+- `../rpi-ble-wifi-provisioning/`: sibling network-provisioning package mounted into the shared BLE gateway.
+- `scripts/`: root orchestration for first-time Pi initialization, recurring install/update, Bluetooth checks, power cleanup, logs, and release helpers.
+- `config/`: shared host-level config, currently log rotation.
+- `desktop/`: laptop-only Witty Pi reference docs and sample files. This folder is excluded from Pi rsync deploys.
 
 ## Fresh Pi Install
 
@@ -27,35 +27,27 @@ On a fresh Raspberry Pi OS Lite install:
 sudo apt update
 sudo apt install -y git
 sudo git clone https://github.com/YOURUSER/sculpture-audio-controller.git /opt/sculpture
+sudo mkdir -p /opt/sculpture/vendor
+sudo git clone https://github.com/YOURUSER/rpi-ble-wifi-provisioning.git /opt/sculpture/vendor/rpi-ble-wifi-provisioning
 cd /opt/sculpture
-sudo ./scripts/install.sh
+sudo ./scripts/initialize-pi.sh
 ```
 
 The default runtime user is `admin`. Override it if needed:
 
 ```bash
-sudo SCULPTURE_USER=myuser ./scripts/install.sh
+sudo SCULPTURE_USER=myuser ./scripts/initialize-pi.sh
 ```
 
-The installer enables Raspberry Pi Connect Lite, direct BLE provisioning/control, and the BLE network provisioning service by default. Disable them only when intentionally building a locked-down image:
+The initializer enables the BLE control service and installs standard Witty Pi software with UWI disabled. It also runs a Bluetooth preflight check and fails fast on Raspberry Pi kernel `6.12.93*`, which is known to break BlueZ D-Bus BLE advertising.
+
+For field power saving, disable Wi-Fi after testing is complete:
 
 ```bash
-sudo ENABLE_RPI_CONNECT=0 ENABLE_PROVISIONING=0 ./scripts/install.sh
+sudo DISABLE_WIFI=1 ./scripts/install.sh
 ```
 
-Direct BLE services can be toggled independently:
-
-```bash
-sudo ENABLE_BLE_PROVISIONING=0 ENABLE_BLE_CONTROL=0 ./scripts/install.sh
-```
-
-If you want Connect to sign in unattended, generate a Raspberry Pi Connect auth key and pass it at install time. The key is staged on the Pi, not committed to this repo:
-
-```bash
-sudo RPI_CONNECT_AUTH_KEY="rpuak_..." ./scripts/install.sh
-```
-
-The installer does not reboot automatically. Reboot after install before field testing:
+The initializer does not reboot automatically. Reboot after initialization before field testing:
 
 ```bash
 sudo reboot
@@ -66,7 +58,7 @@ sudo reboot
 The default config expects:
 
 ```text
-/opt/sculpture/siren-app/assets/audio/ambient.wav
+/opt/sculpture/siren-app/assets/audio/siren-5.wav
 ```
 
 Large audio files are ignored by Git. Copy them with `scp`, rsync, a USB drive, Git LFS, or a GitHub Release asset.
@@ -77,105 +69,79 @@ Test playback:
 /opt/sculpture/siren-app/scripts/test-audio.sh
 ```
 
-## Network Provisioning
+## Shared BLE Gateway
 
-The reusable provisioning module is separate from the siren audio code. It receives BLE commands and uses NetworkManager through `nmcli` to scan for and join Wi-Fi networks.
-
-Default low-power behavior:
-
-1. Direct BLE provisioning runs as `sculpture-ble-provisioning.service`.
-2. The Raspberry Pi does not create or host a setup access point.
-3. The standalone Web Bluetooth page can send Wi-Fi credentials directly over BLE.
-4. The Pi uses NetworkManager to scan for networks and try a Wi-Fi connection.
-
-The BLE provisioning web page is:
-
-```text
-web-bluetooth/provisioning.html
-```
-
-Host it from your own HTTPS site or another browser context that supports Web Bluetooth. The Pi does not serve this page; it only exposes a BLE GATT service. The page connects to the Pi's `SculptureProvisioning` service and sends commands such as:
-
-```text
-status
-scan_wifi
-update_wifi_credentials
-try_connect_wifi
-connect_wifi
-```
-
-Configuration lives in:
-
-```text
-/opt/sculpture/provisioning/settings/provisioning.yaml
-```
-
-Useful commands:
-
-```bash
-sudo systemctl status sculpture-ble-provisioning.service
-journalctl -u sculpture-ble-provisioning.service -n 100 --no-pager
-```
-
-## BLE Control
-
-The siren app also exposes a direct BLE control service:
+The siren app owns one BLE advertisement and one GATT server:
 
 ```text
 sculpture-ble-control.service
 ```
 
-The standalone control page is:
+That gateway registers one shared service UUID with separate provisioning and
+sculpture command/status characteristics. Their command handlers and response
+state remain independent. Do not enable the standalone
+`rpi-ble-wifi-provisioning.service` on the same Pi.
+
+The sculpture characteristics accept:
 
 ```text
-web-bluetooth/siren-control.html
-```
-
-It sends simple commands over BLE:
-
-```text
-play
-pause
-stop
-restart
-resume_normal
+testing_mode
+sculpture_mode
+test_play
+test_pause
+test_restart
+play_sculpture
+pause_sculpture
+set_playback_window
+clear_playback_window
+set_volume
 status
+diagnostics
+reboot
 ```
 
-Web Bluetooth requires a supported browser and a secure context. In practice, host these HTML files from your own HTTPS site for field use. The Raspberry Pi only receives BLE commands and returns compact JSON status.
+Sculpture mode is the normal field mode: playback follows the app schedule and the runtime playback window, and `play_sculpture` / `pause_sculpture` control that normal playback. Testing mode is the manual field-test mode: `test_play`, `test_pause`, and `test_restart` let you exercise audio playback without returning immediately to normal autoplay.
 
-Pi BLE note: the repo defines provisioning and siren control as separate systemd services because they are separate concerns. On the target Pi, verify that BlueZ can advertise both services concurrently with `bless`. If the adapter only advertises one service reliably, merge them into one BLE gateway service that exposes both GATT services from a single process.
+`set_playback_window` accepts `start_time` and `stop_time` in `HH:MM` format, for example `08:00` to `21:00`. The window is stored in `/var/lib/sculpture/playback-window.json`. If no playback window is set, sculpture mode does not autoplay. `clear_playback_window` disables sculpture-mode autoplay again. Older aliases such as `play`, `pause`, `restart`, `pause_normal`, and `resume_normal` are still accepted for compatibility. `set_volume` accepts `volume_percent` from 0 to 100.
 
-Disable provisioning if needed:
+The `diagnostics` command returns compact service states and recent warnings for light field debugging over Bluetooth.
 
-```bash
-sudo ENABLE_PROVISIONING=0 /opt/sculpture/scripts/deploy.sh
-```
+The shared BLE service UUID is configured in
+`siren-app/config/sculpture.yaml`; the sibling provisioning config uses the
+same UUID. By default, `ble.control.device_name: "device"` makes the
+advertised Bluetooth name use the Pi hostname. Names are sanitized and
+truncated to 8 UTF-8 bytes for more reliable Raspberry Pi BLE advertising with
+a 128-bit service UUID.
 
-## Raspberry Pi Connect
-
-The installer installs `rpi-connect-lite`, enables Connect for the runtime user, and enables user lingering so remote shell can stay available without an active local login session.
-
-If no auth key was provided during install, link the Pi manually:
-
-```bash
-rpi-connect signin
-```
-
-Check Connect networking:
+Bluetooth preflight and debug commands:
 
 ```bash
-rpi-connect doctor
+sudo /opt/sculpture/scripts/check-bluetooth-preflight.sh
+sudo systemctl status bluetooth.service --no-pager
+sudo systemctl status sculpture-ble-control.service --no-pager
+sudo journalctl -u sculpture-ble-control.service -b -n 100 --no-pager
 ```
 
 ## Services and Logs
 
 ```bash
+sudo systemctl status bluetooth.service
 sudo systemctl status sculpture-audio.service
 sudo systemctl status sculpture-healthcheck.timer
-sudo systemctl status sculpture-ble-provisioning.service
 sudo systemctl status sculpture-ble-control.service
 journalctl -u sculpture-audio.service -n 100 --no-pager
+```
+
+To stop and disable sculpture-related services during debugging:
+
+```bash
+sudo ./scripts/disable-services.sh
+```
+
+This disables current sculpture services plus Witty Pi/UWI services for low-level debugging. It no longer disables the separate `rpi-ble-wifi-provisioning.service`; install/start now fails with an explicit error if that BLE Wi-Fi service is active or enabled. By default it leaves core `bluetooth.service` and `NetworkManager.service` alone. Disable them only when intentionally testing a fully quiet system:
+
+```bash
+sudo INCLUDE_BLUETOOTH=1 INCLUDE_NETWORK_MANAGER=1 ./scripts/disable-services.sh
 ```
 
 Application logs are written to:
@@ -184,32 +150,38 @@ Application logs are written to:
 /var/log/sculpture/sculpture.log
 ```
 
-## Deploy Updates
+## Install Updates
+
+Script naming in this repo separates first-time machine setup from normal app updates:
+
+- `scripts/initialize-pi.sh`: one-time Pi provisioning for packages, Witty Pi, audio, Bluetooth, and systemd.
+- `scripts/install.sh`: recurring app install/update after code has already been copied to the Pi.
+- `sync-to-pi.sh`: laptop-side rsync helper that copies this checkout to the Pi and runs `scripts/install.sh` by default.
 
 On an existing Pi checkout:
 
 ```bash
 cd /opt/sculpture
-sudo ./scripts/deploy.sh
+sudo ./scripts/install.sh
 ```
 
-This pulls the latest Git checkout when possible, updates Python dependencies, refreshes service files, and restarts the services. It does not delete audio files.
-
-For direct workstation deploys from your Mac, run:
+Keep `siren-sculpture-code` and `rpi-ble-wifi-provisioning` next to each
+other inside the shared `siren-project` folder. For direct workstation syncs
+from your Mac, run:
 
 ```bash
-./scripts/sync-to-pi.sh
+./sync-to-pi.sh
 ```
 
-The sync script defaults to `admin@10.10.30.112:/opt/sculpture`, copies the repo with `rsync`, and then runs `sudo /opt/sculpture/scripts/deploy.sh` on the Pi. It prompts for SSH/sudo passwords as needed; the password is not stored in the repo.
-
-Useful overrides:
+The sync script reads defaults from `sync.env`, copies both sibling
+repositories into `/opt/sculpture`, and runs
+`sudo /opt/sculpture/scripts/install.sh` on the Pi by default. Use overrides
+for less common flows:
 
 ```bash
-PI_HOST=raspberrypi.local ./scripts/sync-to-pi.sh
-RUN_INSTALL=1 ./scripts/sync-to-pi.sh
-RUN_DEPLOY=0 ./scripts/sync-to-pi.sh
-SYNC_AUDIO=1 ./scripts/sync-to-pi.sh
+RUN_INITIALIZE=1 ./sync-to-pi.sh  # Fresh Pi setup after syncing.
+RUN_INSTALL=0 ./sync-to-pi.sh     # Copy files only.
+SYNC_AUDIO=0 ./sync-to-pi.sh      # Skip large local audio files.
 ```
 
 ## Witty Pi Scheduling
@@ -223,15 +195,19 @@ Witty Pi should own the hard power cycle:
 5. Witty Pi cuts power.
 6. RTC keeps time through power interruptions.
 
+The vendor installer automatically installs UUGear Web Interface (UWI), which starts a local web server. This project runs the standard Witty Pi installer through `siren-app/scripts/install-wittypi.sh`, then disables the `uwi` service so the web interface is available for manual maintenance but does not run in the field.
+
 The Python audio service also checks the configured active window, but that is a playback guard, not the primary power scheduler.
 
-The tracked starter schedule is:
+The tracked schedule is:
 
 ```text
 siren-app/config/wittypi/schedule.wpi
 ```
 
-Confirm the exact schedule syntax on the target Witty Pi software before public installation.
+The schedule starts at 07:30, stays on for 12 hours, then stays off for 12 hours. Reboot after applying Witty Pi changes so the daemon loads the schedule cleanly.
+
+Bluetooth note: the standard Witty Pi installer applies `dtoverlay=miniuart-bt`. On Raspberry Pi models with onboard Bluetooth, that moves Bluetooth to the mini UART so GPIO14/TXD can behave the way Witty Pi expects for shutdown/power-cut signaling. The tradeoff is that Bluetooth can become more sensitive to UART/core clock behavior, so BLE control should be retested after the first Witty Pi install and reboot.
 
 ## Configuration
 
@@ -245,7 +221,6 @@ Override this path for testing or custom deployment:
 
 ```bash
 SCULPTURE_CONFIG=/path/to/sculpture.yaml
-PROVISIONING_CONFIG=/path/to/provisioning.yaml
 ```
 
 ## Development Checks
@@ -254,7 +229,7 @@ The code targets Python 3.9+.
 
 ```bash
 python -m pytest
-python -m compileall siren-app provisioning tests
+python -m compileall siren-app tests
 bash -n scripts/*.sh
 ```
 
@@ -263,9 +238,7 @@ bash -n scripts/*.sh
 Before installation:
 
 - Confirm audio plays through amp.
-- Confirm BLE provisioning works from the hosted Web Bluetooth page.
-- Confirm BLE siren control works from the hosted Web Bluetooth page.
-- Confirm Raspberry Pi Connect remote shell works after the Pi joins Wi-Fi.
+- Confirm BLE siren control works from your hosted Web Bluetooth page.
 - Confirm system time and Witty Pi RTC are correct.
 - Confirm Witty Pi morning/evening schedule.
 - Confirm low-voltage behavior if used.

@@ -7,3 +7,4 @@ siren-app/assets/audio/*.wav
 siren-app/assets/audio/*.mp3
 siren-app/assets/audio/*.flac
 siren-app/assets/audio/*.m4a
+.DS_Store

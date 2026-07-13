@@ -16,4 +16,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "siren-app", "provisioning"]
+pythonpath = [".", "siren-app", "../rpi-ble-wifi-provisioning/provisioning"]
