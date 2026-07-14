@@ -24,6 +24,9 @@ elif [[ ! -d "${WITTYPI_DIR}" ]]; then
   exit 0
 fi
 
+SCULPTURE_USER="${SCULPTURE_USER}" WITTYPI_DIR="${WITTYPI_DIR}" \
+  "${APP_DIR}/siren-app/scripts/patch-wittypi-clock-policy.sh"
+
 if [[ ! -f "${SCHEDULE_FILE}" ]]; then
   echo "Schedule file not found: ${SCHEDULE_FILE}" >&2
   exit 1

@@ -12,7 +12,7 @@ from provisioning_core.config import load_config as load_provisioning_config
 from siren_app.ble_control import (
     BLE_STARTUP_ATTEMPTS,
     BLE_STARTUP_RETRY_SECONDS,
-    MAX_LEGACY_ADVERTISEMENT_NAME_BYTES,
+    MAX_ADVERTISEMENT_NAME_BYTES,
     SirenBleControlService,
     _bluetooth_device_name,
     _disable_bluez_experimental_advertisement_properties,
@@ -20,6 +20,7 @@ from siren_app.ble_control import (
     _wifi_power_state,
 )
 from siren_app.config import load_config as load_sculpture_config
+from siren_app.logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class DeviceBleGateway:
 async def run_server() -> None:
     sculpture_config = load_sculpture_config()
     provisioning_config = load_provisioning_config()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    setup_logging(sculpture_config)
 
     if not bool(sculpture_config.get("ble.control.enabled", True)):
         logger.info("Device BLE gateway disabled by sculpture configuration")
@@ -161,8 +162,8 @@ async def run_server() -> None:
             if attempt >= BLE_STARTUP_ATTEMPTS:
                 raise RuntimeError(
                     f"BlueZ failed to start the shared BLE gateway on adapter {adapter}. Confirm bluetooth.service "
-                    "is running, the adapter exists, and no standalone BLE service is advertising. The device name "
-                    f"must be at most {MAX_LEGACY_ADVERTISEMENT_NAME_BYTES} UTF-8 bytes."
+                    "is running, the adapter exists, and no other process is advertising. The device name "
+                    f"must be at most {MAX_ADVERTISEMENT_NAME_BYTES} UTF-8 bytes."
                 ) from exc
             logger.warning(
                 "BLE gateway startup attempt %s/%s failed on adapter %s: %s",

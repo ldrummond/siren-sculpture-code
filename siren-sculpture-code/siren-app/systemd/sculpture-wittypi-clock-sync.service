@@ -1,0 +1,11 @@
+[Unit]
+Description=Synchronize Witty Pi RTC after confirmed network time
+After=wittypi.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/home/admin/wittypi/utilities.sh
+
+[Service]
+Type=oneshot
+StandardOutput=journal
+StandardError=journal
+ExecStart=/opt/sculpture/siren-app/scripts/sync-wittypi-clock.sh

@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,8 +13,8 @@ except ImportError:  # pragma: no cover - psutil is optional at runtime.
     psutil = None
 
 from siren_app.config import AppConfig
-from siren_app.player import AudioPlayer, read_playback_window, read_published_status
-from siren_app.wittypi import get_wittypi_status
+from siren_app.player import AudioPlayer, is_clock_trusted, read_playback_window, read_published_status
+from siren_app.wittypi import get_wittypi_status, read_rtc_time
 
 
 def gather_status(config: AppConfig, player: AudioPlayer | None = None) -> dict[str, Any]:
@@ -74,36 +73,20 @@ def _uptime_seconds() -> int | None:
 
 def _clock_status(config: AppConfig, errors: list[str]) -> dict[str, Any]:
     now = datetime.now().astimezone()
-    rtc_time = _read_rtc_time()
+    rtc_time = read_rtc_time(config)
     drift_seconds = None
-    clock_ok = True
+    clock_trusted = is_clock_trusted(config)
+    clock_ok = clock_trusted
+    if not clock_trusted:
+        errors.append("Clock is not trusted: Witty Pi RTC is invalid and network time is not synchronized")
     if rtc_time:
         drift_seconds = abs(round((now - rtc_time).total_seconds()))
         warn_after = int(config.get("healthcheck.clock_drift_warn_seconds", 120) or 120)
-        clock_ok = drift_seconds <= warn_after
+        clock_ok = clock_trusted and drift_seconds <= warn_after
     return {
         "system_time": now.isoformat(timespec="seconds"),
         "rtc_time": rtc_time.isoformat(timespec="seconds") if rtc_time else None,
+        "clock_trusted": clock_trusted,
         "clock_ok": clock_ok,
         "drift_seconds": drift_seconds,
     }
-
-
-def _read_rtc_time() -> datetime | None:
-    try:
-        result = subprocess.run(
-            ["hwclock", "--show", "--iso"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
-    value = result.stdout.strip()
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value).astimezone()
-    except ValueError:
-        return None

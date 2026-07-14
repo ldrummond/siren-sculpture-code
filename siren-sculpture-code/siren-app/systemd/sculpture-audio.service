@@ -1,6 +1,6 @@
 [Unit]
 Description=Sculpture Audio Playback Service
-After=sound.target
+After=sound.target wittypi.service
 Wants=sound.target
 
 [Service]
@@ -10,6 +10,17 @@ WorkingDirectory=/opt/sculpture
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/sculpture/siren-app
 Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
+Environment=SCULPTURE_COMMAND_FILE=/run/sculpture-audio-controller/command
+Environment=SCULPTURE_STATUS_FILE=/run/sculpture-audio-controller/status.json
+Environment=SCULPTURE_CLOCK_TRUST_FILE=/run/sculpture-clock-trusted
+Environment=SCULPTURE_AUDIO_DEVICE_FILE=/run/sculpture-audio-controller/audio-device
+RuntimeDirectory=sculpture-audio-controller
+RuntimeDirectoryMode=0775
+RuntimeDirectoryPreserve=yes
+UMask=0002
+StandardOutput=journal
+StandardError=journal
+ExecStartPre=+/opt/sculpture/siren-app/scripts/select-audio-device.sh
 ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.player --autoplay
 Restart=always
 RestartSec=5

@@ -4,7 +4,9 @@ set -euo pipefail
 SCULPTURE_USER="${SCULPTURE_USER:-admin}"
 APP_DIR="${APP_DIR:-/opt/sculpture}"
 PROVISIONING_DIR="${PROVISIONING_DIR:-${APP_DIR}/vendor/rpi-ble-wifi-provisioning}"
+WITTYPI_DIR="${WITTYPI_DIR:-/home/${SCULPTURE_USER}/wittypi}"
 APPLY_WITTYPI_SCHEDULE="${APPLY_WITTYPI_SCHEDULE:-1}"
+ENABLE_WITTYPI_CLOCK_SYNC="${ENABLE_WITTYPI_CLOCK_SYNC:-1}"
 ENABLE_BLE_CONTROL="${ENABLE_BLE_CONTROL:-1}"
 INSTALL_WITTYPI="${INSTALL_WITTYPI:-0}"
 DISABLE_UWI="${DISABLE_UWI:-1}"
@@ -37,13 +39,10 @@ ensure_script_permissions
 mkdir -p /var/lib/sculpture
 chown -R "${SCULPTURE_USER}:${SCULPTURE_USER}" /var/lib/sculpture
 
-if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
-  if [[ ! -f "${PROVISIONING_DIR}/pyproject.toml" ]]; then
-    echo "Missing BLE provisioning package: ${PROVISIONING_DIR}" >&2
-    echo "Run sync-to-pi.sh from the shared siren-project folder before installing." >&2
-    exit 1
-  fi
-  "${APP_DIR}/scripts/check-service-conflicts.sh"
+if [[ "${ENABLE_BLE_CONTROL}" == "1" && ! -f "${PROVISIONING_DIR}/pyproject.toml" ]]; then
+  echo "Missing BLE provisioning package: ${PROVISIONING_DIR}" >&2
+  echo "Run sync-to-pi.sh from the shared siren-project folder before installing." >&2
+  exit 1
 fi
 
 APT_UPDATED=0
@@ -86,8 +85,6 @@ cp "${APP_DIR}"/siren-app/systemd/*.timer /etc/systemd/system/
 if [[ "${SCULPTURE_USER}" != "admin" ]]; then
   sed -i "s/^User=admin$/User=${SCULPTURE_USER}/" /etc/systemd/system/sculpture-*.service
 fi
-cp "${APP_DIR}/config/logrotate-sculpture" /etc/logrotate.d/sculpture
-
 echo
 echo "-----------------------------------------------"
 echo "Configuring WittyPI Scheduling and Disabling WIFI Interface..."
@@ -95,7 +92,10 @@ echo "-----------------------------------------------"
 echo
 
 if [[ "${APPLY_WITTYPI_SCHEDULE}" == "1" ]]; then
-  INSTALL_WITTYPI="${INSTALL_WITTYPI}" DISABLE_UWI="${DISABLE_UWI}" "${APP_DIR}/siren-app/scripts/configure-wittypi.sh" || true
+  INSTALL_WITTYPI="${INSTALL_WITTYPI}" DISABLE_UWI="${DISABLE_UWI}" "${APP_DIR}/siren-app/scripts/configure-wittypi.sh"
+elif [[ "${ENABLE_WITTYPI_CLOCK_SYNC}" == "1" && -d "${WITTYPI_DIR}" ]]; then
+  SCULPTURE_USER="${SCULPTURE_USER}" WITTYPI_DIR="${WITTYPI_DIR}" \
+    "${APP_DIR}/siren-app/scripts/patch-wittypi-clock-policy.sh"
 fi
 
 DISABLE_UWI="${DISABLE_UWI}" DISABLE_WIFI="${DISABLE_WIFI}" DISABLE_HDMI="${DISABLE_HDMI}" "${APP_DIR}/scripts/configure-low-power.sh" || true
@@ -115,6 +115,11 @@ else
 fi
 systemctl restart sculpture-audio.service
 systemctl restart sculpture-healthcheck.timer
+if [[ "${ENABLE_WITTYPI_CLOCK_SYNC}" == "1" && -d "${WITTYPI_DIR}" ]]; then
+  systemctl enable --now sculpture-wittypi-clock-sync.timer
+else
+  systemctl disable --now sculpture-wittypi-clock-sync.timer 2>/dev/null || true
+fi
 if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
   systemctl restart sculpture-ble-control.service
 fi
@@ -129,4 +134,5 @@ echo
 systemctl --no-pager --full status bluetooth.service || true
 systemctl --no-pager --full status sculpture-audio.service || true
 systemctl --no-pager --full status sculpture-healthcheck.timer || true
+systemctl --no-pager --full status sculpture-wittypi-clock-sync.timer || true
 systemctl --no-pager --full status sculpture-ble-control.service || true

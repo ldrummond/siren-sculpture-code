@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from siren_app.config import ConfigError, load_config
+from siren_app.status import gather_status
 
 
 def write_config(path: Path, extra: str = "") -> Path:
@@ -14,22 +15,14 @@ project:
   name: "public-sculpture-audio"
 paths:
   app_dir: "/tmp/sculpture"
-  audio_dir: "/tmp/sculpture/audio"
-  log_dir: "/tmp/sculpture/logs"
-runtime:
-  user: "pi"
-  group: "audio"
 audio:
   file: "/tmp/sculpture/audio/ambient.wav"
   loop: true
   player: "mpv"
 schedule:
-  start_time: "07:30"
-  stop_time: "19:30"
   timezone: "America/Denver"
 logging:
   level: "INFO"
-  file: "/tmp/sculpture/logs/sculpture.log"
 wittypi:
   enabled: false
 healthcheck:
@@ -54,3 +47,12 @@ def test_load_config_missing_required_value_fails_clearly(tmp_path: Path) -> Non
 
     with pytest.raises(ConfigError, match="missing required keys"):
         load_config(path)
+
+
+def test_audio_status_reports_missing_file(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path / "sculpture.yaml"))
+
+    status = gather_status(config)
+
+    assert status["audio"]["file_exists"] is False
+    assert "does not exist" in status["audio"]["error"]

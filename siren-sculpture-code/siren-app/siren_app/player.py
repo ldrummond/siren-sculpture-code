@@ -12,15 +12,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from siren_app.config import AppConfig, ConfigError, _parse_time, is_within_schedule, load_config
+from siren_app.config import AppConfig, ConfigError, _parse_time, load_config
 from siren_app.logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
 
-COMMAND_FILE = Path(os.environ.get("SCULPTURE_COMMAND_FILE", "/tmp/sculpture-audio-controller/command"))
-STATUS_FILE = Path(os.environ.get("SCULPTURE_STATUS_FILE", "/tmp/sculpture-audio-controller/status.json"))
+COMMAND_FILE = Path(os.environ.get("SCULPTURE_COMMAND_FILE", "/run/sculpture-audio-controller/command"))
+STATUS_FILE = Path(os.environ.get("SCULPTURE_STATUS_FILE", "/run/sculpture-audio-controller/status.json"))
 PLAYBACK_WINDOW_FILE = Path(os.environ.get("SCULPTURE_PLAYBACK_WINDOW_FILE", "/var/lib/sculpture/playback-window.json"))
+CLOCK_TRUST_FILE = Path(os.environ.get("SCULPTURE_CLOCK_TRUST_FILE", "/run/sculpture-clock-trusted"))
+AUDIO_DEVICE_FILE = Path(
+    os.environ.get("SCULPTURE_AUDIO_DEVICE_FILE", "/run/sculpture-audio-controller/audio-device")
+)
 
 
 @dataclass
@@ -113,6 +117,12 @@ def playback_window_command(payload: dict[str, Any]) -> str:
     return "playback_window:" + json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
+def is_clock_trusted(config: AppConfig) -> bool:
+    if not bool(config.get("wittypi.enabled", False)):
+        return True
+    return CLOCK_TRUST_FILE.exists()
+
+
 def _validate_time_string(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} is required")
@@ -159,6 +169,19 @@ class AudioPlayer:
         self._paused = False
         configured_volume = config.get("audio.volume_percent")
         self.volume_percent = int(configured_volume) if configured_volume is not None else None
+        self.alsa_device = self._read_selected_audio_device()
+
+    @staticmethod
+    def _read_selected_audio_device() -> str | None:
+        try:
+            device = AUDIO_DEVICE_FILE.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            logger.warning("Audio device selection file does not exist: %s", AUDIO_DEVICE_FILE)
+            return None
+        except OSError as exc:
+            logger.warning("Unable to read audio device selection file %s: %s", AUDIO_DEVICE_FILE, exc)
+            return None
+        return device or None
 
     @property
     def audio_file(self) -> Path:
@@ -166,7 +189,12 @@ class AudioPlayer:
 
     def build_command(self) -> list[str]:
         command = [str(self.config.get("audio.player", "mpv"))]
-        command.extend(str(arg) for arg in self.config.get("audio.extra_args", []) or [])
+        extra_args = [str(arg) for arg in self.config.get("audio.extra_args", []) or []]
+        if self.alsa_device:
+            extra_args = [arg for arg in extra_args if not arg.startswith("--ao=")]
+        command.extend(extra_args)
+        if self.alsa_device and not any(arg.startswith("--audio-device=") for arg in command):
+            command.append(f"--audio-device=alsa/{self.alsa_device}")
         if self.config.get("audio.loop", True) and not any(str(arg).startswith("--loop-file") for arg in command):
             command.append("--loop-file=inf")
         if self.volume_percent is not None:
@@ -319,38 +347,38 @@ def run_autoplay() -> int:
         command = _read_command()
         if command:
             logger.info("Received audio command: %s", command)
-            if command in {"testing_mode", "enter_testing_mode"}:
+            if command == "testing_mode":
                 manual_override = True
                 manual_paused = True
                 normal_paused = False
                 logger.info("Entering testing mode")
                 player.stop()
-            elif command in {"sculpture_mode", "enter_sculpture_mode"}:
+            elif command == "sculpture_mode":
                 manual_override = False
                 manual_paused = False
                 normal_paused = False
                 logger.info("Entering sculpture mode")
-            elif command in {"play", "test_play"}:
+            elif command == "test_play":
                 manual_override = True
                 manual_paused = False
                 normal_paused = False
                 player.resume()
-            elif command in {"pause", "test_pause"}:
+            elif command == "test_pause":
                 manual_override = True
                 manual_paused = True
                 normal_paused = False
                 player.pause()
-            elif command in {"pause_normal", "pause_sculpture", "stop"}:
+            elif command == "pause_sculpture":
                 manual_override = False
                 manual_paused = False
                 normal_paused = True
                 player.stop()
-            elif command in {"restart", "test_restart"}:
+            elif command == "test_restart":
                 manual_override = True
                 manual_paused = False
                 normal_paused = False
                 player.restart()
-            elif command in {"resume_normal", "play_sculpture"}:
+            elif command == "play_sculpture":
                 manual_override = False
                 manual_paused = False
                 normal_paused = False
@@ -371,11 +399,10 @@ def run_autoplay() -> int:
             else:
                 logger.warning("Ignoring unknown audio command: %s", command)
 
-        guard_enabled = bool(config.get("schedule.use_app_schedule_guard", True))
-        config_schedule_active = is_within_schedule(config) if guard_enabled else True
         playback_window = read_playback_window(config)
         sculpture_window_active = bool(playback_window.get("enabled")) and bool(playback_window.get("active"))
-        active = sculpture_window_active
+        clock_trusted = is_clock_trusted(config)
+        active = sculpture_window_active and clock_trusted
         player.check_process()
 
         if not normal_paused and (active or manual_override) and not manual_paused:
@@ -393,7 +420,7 @@ def run_autoplay() -> int:
         status["control_mode"] = "testing" if manual_override or manual_paused else "sculpture"
         status["supervisor_mode"] = "manual" if manual_override else "normal_paused" if normal_paused else "schedule"
         status["playback_window"] = playback_window
-        status["config_schedule_active"] = config_schedule_active
+        status["clock_trusted"] = clock_trusted
         _write_status(status)
         time.sleep(5)
 
@@ -404,16 +431,8 @@ def run_autoplay() -> int:
 
 def queue_command(command: str) -> None:
     allowed_commands = {
-        "play",
-        "pause",
-        "stop",
-        "restart",
-        "resume_normal",
-        "pause_normal",
         "testing_mode",
-        "enter_testing_mode",
         "sculpture_mode",
-        "enter_sculpture_mode",
         "test_play",
         "test_pause",
         "test_restart",

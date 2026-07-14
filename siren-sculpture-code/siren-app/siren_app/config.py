@@ -15,18 +15,11 @@ DEFAULT_CONFIG_PATH = "/opt/sculpture/siren-app/config/sculpture.yaml"
 REQUIRED_KEYS = (
     "project.name",
     "paths.app_dir",
-    "paths.audio_dir",
-    "paths.log_dir",
-    "runtime.user",
-    "runtime.group",
     "audio.file",
     "audio.loop",
     "audio.player",
-    "schedule.start_time",
-    "schedule.stop_time",
     "schedule.timezone",
     "logging.level",
-    "logging.file",
     "wittypi.enabled",
     "healthcheck.disk_free_warn_mb",
 )
@@ -70,8 +63,6 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         joined = ", ".join(missing)
         raise ConfigError(f"Configuration file {config_path} is missing required keys: {joined}")
 
-    _validate_time(raw, "schedule.start_time")
-    _validate_time(raw, "schedule.stop_time")
     _validate_timezone(raw, "schedule.timezone")
     return AppConfig(data=raw, path=config_path)
 
@@ -92,13 +83,6 @@ def _parse_time(value: str) -> time:
         raise ConfigError(f"Invalid schedule time '{value}'. Expected HH:MM") from exc
 
 
-def _validate_time(data: dict[str, Any], dotted_key: str) -> None:
-    value = _deep_get(data, dotted_key)
-    if not isinstance(value, str):
-        raise ConfigError(f"{dotted_key} must be a string in HH:MM format")
-    _parse_time(value)
-
-
 def _validate_timezone(data: dict[str, Any], dotted_key: str) -> None:
     value = _deep_get(data, dotted_key)
     if not isinstance(value, str):
@@ -107,15 +91,3 @@ def _validate_timezone(data: dict[str, Any], dotted_key: str) -> None:
         ZoneInfo(value)
     except Exception as exc:
         raise ConfigError(f"Invalid timezone '{value}'") from exc
-
-
-def is_within_schedule(config: AppConfig, now: datetime | None = None) -> bool:
-    timezone = ZoneInfo(str(config.get("schedule.timezone")))
-    current = now.astimezone(timezone) if now else datetime.now(timezone)
-    start = _parse_time(str(config.get("schedule.start_time")))
-    stop = _parse_time(str(config.get("schedule.stop_time")))
-    current_time = current.time()
-
-    if start <= stop:
-        return start <= current_time < stop
-    return current_time >= start or current_time < stop

@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pi Wi-Fi Setup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f6f1;
+      --panel: #ffffff;
+      --text: #17211c;
+      --muted: #5d6963;
+      --line: #d7ddd5;
+      --primary: #105c4b;
+      --primary-strong: #0b4035;
+      --danger: #9f2d20;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(760px, 100%);
+      margin: 0 auto;
+      padding: 20px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+    section, form {
+      border-top: 1px solid var(--line);
+      padding: 18px 0;
+    }
+    label {
+      display: block;
+      margin: 12px 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 650;
+    }
+    input {
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      margin-top: 6px;
+      padding: 9px 10px;
+      border: 1px solid #aeb8b1;
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+    input[type="checkbox"] {
+      display: inline-grid;
+      width: 18px;
+      min-height: 18px;
+      margin: 0 8px 0 0;
+      vertical-align: middle;
+    }
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: var(--primary);
+      color: #fff;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button:hover { background: var(--primary-strong); }
+    button.is-loading::before {
+      content: "";
+      width: 14px;
+      height: 14px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+      flex: 0 0 auto;
+    }
+    button.secondary {
+      background: var(--panel);
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+    button.secondary:hover { background: #edf4f1; }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.56;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .status {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+      overflow-wrap: anywhere;
+    }
+    .networks {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .network {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--panel);
+      color: var(--text);
+      text-align: left;
+    }
+    .network:disabled { opacity: 0.7; }
+    .network:hover { border-color: var(--primary); }
+    .ssid {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-weight: 650;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    pre {
+      min-height: 112px;
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-x: auto;
+      border-radius: 6px;
+      background: #151816;
+      color: #e9efe9;
+      padding: 12px;
+      font-size: 0.9rem;
+    }
+    .error { color: var(--danger); }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pi Wi-Fi Setup</h1>
+    <p id="connection-status" class="status">Disconnected</p>
+  </header>
+
+  <section>
+    <div class="row">
+      <button id="connect-button" type="button">Connect</button>
+      <button id="status-button" class="secondary" type="button" disabled>Status</button>
+      <button id="scan-button" class="secondary" type="button" disabled>Scan Wi-Fi</button>
+    </div>
+  </section>
+
+  <form id="wifi-form">
+    <h2>Network</h2>
+    <label>Wi-Fi network name<input id="ssid" name="ssid" required autocomplete="off"></label>
+    <label>Wi-Fi password<input name="password" autocomplete="current-password"></label>
+    <label><input name="hidden" type="checkbox" value="true">Hidden network</label>
+    <div class="row">
+      <button id="save-button" type="submit" disabled>Save Credentials</button>
+      <button id="try-button" type="button" class="secondary" disabled>Try Connection</button>
+    </div>
+  </form>
+
+  <section>
+    <h2>Available Networks</h2>
+    <div id="networks" class="networks"></div>
+  </section>
+
+  <section>
+    <h2>Result</h2>
+    <pre id="output"></pre>
+  </section>
+</main>
+
+<script>
+const SERVICE_UUID = '9f0d0101-7b6d-4d2c-9f4f-6f70726f7601';
+const COMMAND_UUID = '9f0d0002-7b6d-4d2c-9f4f-6f70726f7601';
+const STATUS_UUID = '9f0d0003-7b6d-4d2c-9f4f-6f70726f7601';
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+let device;
+let commandCharacteristic;
+let statusCharacteristic;
+let isConnected = false;
+let busy = false;
+let activeButton;
+
+const output = document.getElementById('output');
+const connectionStatus = document.getElementById('connection-status');
+const connectButton = document.getElementById('connect-button');
+const statusButton = document.getElementById('status-button');
+const scanButton = document.getElementById('scan-button');
+const saveButton = document.getElementById('save-button');
+const tryButton = document.getElementById('try-button');
+const networks = document.getElementById('networks');
+const ssidInput = document.getElementById('ssid');
+const controls = [connectButton, statusButton, scanButton, saveButton, tryButton];
+
+connectButton.addEventListener('click', () => runWithLoading(connectButton, 'Connecting...', connectBle));
+statusButton.addEventListener('click', () => runWithLoading(statusButton, 'Checking...', () => sendCommand({ action: 'status' })));
+scanButton.addEventListener('click', () => runWithLoading(scanButton, 'Scanning...', scanWifi));
+tryButton.addEventListener('click', () => runWithLoading(tryButton, 'Connecting...', tryConnectWifi));
+
+document.getElementById('wifi-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const data = new FormData(event.target);
+  runWithLoading(saveButton, 'Saving...', () => sendCommand({
+    action: 'update_wifi_credentials',
+    ssid: data.get('ssid'),
+    password: data.get('password') || '',
+    hidden: data.get('hidden') === 'true'
+  }));
+});
+
+function setConnected(connected) {
+  isConnected = connected;
+  connectionStatus.textContent = connected && device ? `Connected to ${device.name || 'Pi'}` : 'Disconnected';
+  updateControls();
+}
+
+function updateControls() {
+  connectButton.disabled = busy;
+  statusButton.disabled = !isConnected || busy;
+  scanButton.disabled = !isConnected || busy;
+  saveButton.disabled = !isConnected || busy;
+  tryButton.disabled = !isConnected || busy;
+  for (const button of document.querySelectorAll('.network')) {
+    button.disabled = busy;
+  }
+}
+
+function show(value, isError = false) {
+  output.classList.toggle('error', isError);
+  output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+async function runWithLoading(button, message, action) {
+  if (busy) return;
+  setBusy(button, message);
+  try {
+    await action();
+  } catch (error) {
+    show(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    clearBusy();
+  }
+}
+
+function setBusy(button, message) {
+  busy = true;
+  activeButton = button;
+  if (button) {
+    button.dataset.defaultLabel = button.dataset.defaultLabel || button.textContent;
+    button.textContent = message;
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+  }
+  if (message) {
+    connectionStatus.textContent = message;
+  }
+  updateControls();
+}
+
+function clearBusy() {
+  if (activeButton) {
+    activeButton.textContent = activeButton.dataset.defaultLabel || activeButton.textContent;
+    activeButton.classList.remove('is-loading');
+    activeButton.removeAttribute('aria-busy');
+  }
+  activeButton = undefined;
+  busy = false;
+  setConnected(isConnected);
+}
+
+async function connectBle() {
+  if (!navigator.bluetooth || !window.isSecureContext) {
+    throw new Error('Web Bluetooth requires Chrome or Edge from an HTTPS page, or localhost during development.');
+  }
+
+  device = await navigator.bluetooth.requestDevice({
+    filters: [{ services: [SERVICE_UUID] }],
+    optionalServices: [SERVICE_UUID]
+  });
+  device.addEventListener('gattserverdisconnected', () => {
+    commandCharacteristic = undefined;
+    statusCharacteristic = undefined;
+    setConnected(false);
+  });
+
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  commandCharacteristic = await service.getCharacteristic(COMMAND_UUID);
+  statusCharacteristic = await service.getCharacteristic(STATUS_UUID);
+  setConnected(true);
+  await refreshStatus();
+}
+
+async function sendCommand(command) {
+  const response = await writeCommand(command);
+  if (Object.prototype.hasOwnProperty.call(response, 'networks')) {
+    renderNetworks(response.networks || []);
+  }
+  show(response);
+  return response;
+}
+
+async function writeCommand(command) {
+  if (!commandCharacteristic) {
+    await connectBle();
+  }
+  const payload = encoder.encode(JSON.stringify(command));
+  if (commandCharacteristic.writeValueWithResponse) {
+    await commandCharacteristic.writeValueWithResponse(payload);
+  } else {
+    await commandCharacteristic.writeValue(payload);
+  }
+  return readResponse();
+}
+
+async function scanWifi() {
+  let offset = 0;
+  const allNetworks = [];
+  let response;
+
+  do {
+    response = await writeCommand({
+      action: offset === 0 ? 'scan_wifi' : 'scan_wifi_page',
+      offset
+    });
+    if (!response.ok) {
+      show(response, true);
+      return;
+    }
+    allNetworks.push(...(response.networks || []));
+    renderNetworks(allNetworks);
+    offset = response.next_offset;
+  } while (offset !== null && offset !== undefined);
+
+  show({
+    ok: true,
+    networks: allNetworks,
+    received: allNetworks.length,
+    total: response ? response.total : allNetworks.length
+  });
+}
+
+async function tryConnectWifi() {
+  const response = await sendCommand({ action: 'try_connect_wifi' });
+  if (response.state !== 'connecting') {
+    return;
+  }
+
+  const finalResponse = await pollConnectionResult();
+  show(finalResponse, finalResponse.ok === false);
+}
+
+async function connectSavedWifi(ssid) {
+  const response = await sendCommand({ action: 'connect_saved_wifi', ssid });
+  if (response.state !== 'connecting') {
+    return;
+  }
+
+  const finalResponse = await pollConnectionResult();
+  show(finalResponse, finalResponse.ok === false);
+}
+
+async function pollConnectionResult() {
+  const startedAt = Date.now();
+  const timeoutMs = 90000;
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(2000);
+    const response = await readResponse();
+    show(response, response.ok === false && response.state !== 'connecting');
+    if (response.state !== 'connecting') {
+      return response;
+    }
+  }
+  throw new Error('Wi-Fi connection is still running after 90 seconds');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function refreshStatus() {
+  const response = await readResponse();
+  renderNetworks(response.networks || []);
+  show(response);
+}
+
+async function readResponse() {
+  if (!statusCharacteristic) {
+    throw new Error('Not connected');
+  }
+  const value = await statusCharacteristic.readValue();
+  const text = decoder.decode(value);
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`BLE response was not complete JSON (${text.length} bytes): ${text.slice(0, 160)}`);
+  }
+}
+
+function renderNetworks(items) {
+  networks.replaceChildren();
+  for (const network of items) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'network';
+    button.disabled = busy;
+    button.addEventListener('click', () => {
+      ssidInput.value = network.ssid || '';
+      if (network.saved) {
+        runWithLoading(tryButton, 'Connecting...', () => connectSavedWifi(network.ssid || ''));
+      } else {
+        ssidInput.focus();
+      }
+    });
+
+    const ssid = document.createElement('span');
+    ssid.className = 'ssid';
+    ssid.textContent = network.ssid || '(hidden)';
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    const details = `${network.signal || '?'}% ${network.security || 'open'}`;
+    meta.textContent = network.saved ? `saved - ${details}` : details;
+
+    button.append(ssid, meta);
+    networks.append(button);
+  }
+}
+</script>
+</body>
+</html>

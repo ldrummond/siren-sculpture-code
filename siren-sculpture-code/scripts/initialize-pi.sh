@@ -48,26 +48,20 @@ apt install -y \
   unzip \
   wget \
   ca-certificates \
-  logrotate \
   curl \
   bluez \
   network-manager \
   rfkill
 
-mkdir -p /var/log/sculpture
-chown -R "${SCULPTURE_USER}:audio" /var/log/sculpture
 mkdir -p /var/lib/sculpture
 chown -R "${SCULPTURE_USER}:${SCULPTURE_USER}" /var/lib/sculpture
 chown -R "${SCULPTURE_USER}:${SCULPTURE_USER}" "${APP_DIR}"
 ensure_script_permissions
 
-if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
-  if [[ ! -f "${PROVISIONING_DIR}/pyproject.toml" ]]; then
-    echo "Missing BLE provisioning package: ${PROVISIONING_DIR}" >&2
-    echo "Run sync-to-pi.sh from the shared siren-project folder before initializing." >&2
-    exit 1
-  fi
-  "${APP_DIR}/scripts/check-service-conflicts.sh"
+if [[ "${ENABLE_BLE_CONTROL}" == "1" && ! -f "${PROVISIONING_DIR}/pyproject.toml" ]]; then
+  echo "Missing BLE provisioning package: ${PROVISIONING_DIR}" >&2
+  echo "Run sync-to-pi.sh from the shared siren-project folder before initializing." >&2
+  exit 1
 fi
 
 echo
@@ -120,8 +114,6 @@ echo "------------------------------------------------"
 echo
 DISABLE_UWI="${DISABLE_UWI}" DISABLE_WIFI="${DISABLE_WIFI}" DISABLE_HDMI="${DISABLE_HDMI}" "${APP_DIR}/scripts/configure-low-power.sh"
 
-cp "${APP_DIR}/config/logrotate-sculpture" /etc/logrotate.d/sculpture
-
 echo
 echo "------------------------------------------------"
 echo "Starting system services"
@@ -137,6 +129,7 @@ fi
 systemctl daemon-reload
 systemctl enable sculpture-audio.service
 systemctl enable sculpture-healthcheck.timer
+systemctl enable --now sculpture-wittypi-clock-sync.timer
 if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
   systemctl enable --now NetworkManager.service
   systemctl enable sculpture-ble-control.service
@@ -157,5 +150,6 @@ echo "Useful status commands:"
 echo "  systemctl status bluetooth.service"
 echo "  systemctl status sculpture-audio.service"
 echo "  systemctl status sculpture-healthcheck.timer"
+echo "  systemctl status sculpture-wittypi-clock-sync.timer"
 echo "  systemctl status sculpture-ble-control.service"
 echo "  journalctl -u sculpture-ble-control.service -n 50 --no-pager"

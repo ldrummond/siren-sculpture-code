@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Witty Pi RTC network synchronization
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=sculpture-wittypi-clock-sync.service
+
+[Install]
+WantedBy=timers.target

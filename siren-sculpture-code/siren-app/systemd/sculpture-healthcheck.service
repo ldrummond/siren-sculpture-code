@@ -9,4 +9,6 @@ WorkingDirectory=/opt/sculpture
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/sculpture/siren-app
 Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
+StandardOutput=journal
+StandardError=journal
 ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.healthcheck

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,8 @@ logger = logging.getLogger(__name__)
 UTILITY_FUNCTIONS = frozenset({"get_temperature", "get_rtc_time"})
 RTC_TIME_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 TEMPERATURE_PATTERN = re.compile(r"(-?\d+(?:\.\d+)?)\s*(?:\u00b0|deg|C|$)", re.IGNORECASE)
+CLOCK_TRUST_FILE = Path(os.environ.get("SCULPTURE_CLOCK_TRUST_FILE", "/run/sculpture-clock-trusted"))
+CLOCK_SOURCE_FILE = Path(os.environ.get("SCULPTURE_CLOCK_SOURCE_FILE", "/run/sculpture-clock-source.json"))
 
 
 def is_wittypi_installed(config: AppConfig) -> bool:
@@ -100,12 +104,62 @@ def apply_schedule(config: AppConfig, schedule_file: str | None = None) -> bool:
     return True
 
 
-def sync_system_time_to_rtc(config: AppConfig) -> bool:
-    return _run_witty_command(config, ["sudo", "hwclock", "-w"])
+def set_system_and_rtc_time(config: AppConfig, epoch_seconds: float, source: str = "ble-client") -> dict[str, Any]:
+    if not bool(config.get("wittypi.enabled", False)):
+        raise RuntimeError("Witty Pi integration is disabled")
 
+    target = datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
+    if not 2020 <= target.year <= 2099:
+        raise ValueError("time must be between 2020 and 2099")
 
-def sync_rtc_to_system_time(config: AppConfig) -> bool:
-    return _run_witty_command(config, ["sudo", "hwclock", "-s"])
+    software_dir = Path(str(config.get("wittypi.software_dir", "/home/admin/wittypi")))
+    if not (software_dir / "utilities.sh").exists():
+        raise RuntimeError(f"Witty Pi utilities not found: {software_dir / 'utilities.sh'}")
+
+    system_time_changed = False
+    try:
+        CLOCK_TRUST_FILE.unlink(missing_ok=True)
+        _run_checked(["timedatectl", "set-ntp", "false"])
+        _run_checked(["date", "--utc", f"--set=@{int(epoch_seconds)}"])
+        system_time_changed = True
+        _run_checked(
+            ["bash", "-lc", "source ./utilities.sh >/dev/null 2>&1 && system_to_rtc"],
+            cwd=software_dir,
+        )
+
+        rtc_time = read_rtc_time(config)
+        if rtc_time is None:
+            raise RuntimeError("Witty Pi RTC did not return a valid time after synchronization")
+        system_time = datetime.now().astimezone()
+        drift_seconds = abs(round(system_time.timestamp() - rtc_time.timestamp()))
+        if drift_seconds > 10:
+            raise RuntimeError(f"Witty Pi RTC verification failed: {drift_seconds} seconds from system time")
+
+        CLOCK_TRUST_FILE.touch()
+        source_payload = {
+            "source": source,
+            "system_time": system_time.isoformat(timespec="seconds"),
+            "rtc_time": rtc_time.isoformat(timespec="seconds"),
+        }
+        source_temp = CLOCK_SOURCE_FILE.with_suffix(".tmp")
+        source_temp.write_text(json.dumps(source_payload, separators=(",", ":")), encoding="utf-8")
+        source_temp.replace(CLOCK_SOURCE_FILE)
+        return {**source_payload, "drift_seconds": drift_seconds}
+    except Exception:
+        if system_time_changed:
+            CLOCK_TRUST_FILE.unlink(missing_ok=True)
+        raise
+    finally:
+        try:
+            subprocess.run(
+                ["timedatectl", "set-ntp", "true"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Unable to restore NTP after clock update: %s", exc)
 
 
 def _run_utility_function(config: AppConfig, function_name: str) -> str | None:
@@ -141,14 +195,18 @@ def _run_utility_function(config: AppConfig, function_name: str) -> str | None:
     return result.stdout.strip()
 
 
-def _run_witty_command(config: AppConfig, command: list[str]) -> bool:
-    if not bool(config.get("wittypi.enabled", False)):
-        logger.warning("Witty Pi integration disabled; command skipped: %s", command)
-        return False
-    logger.info("Running Witty Pi time command: %s", " ".join(command))
+def _run_checked(command: list[str], cwd: Path | None = None) -> None:
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-        return True
-    except (OSError, subprocess.CalledProcessError) as exc:
-        logger.error("Witty Pi command failed: %s", exc)
-        return False
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            cwd=cwd,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Unable to run {command[0]}: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+        raise RuntimeError(f"{command[0]} failed: {detail}")

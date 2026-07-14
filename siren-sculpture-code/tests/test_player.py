@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from siren_app.player import AudioPlayer, playback_window_command, queue_command, read_playback_window, write_playback_window
+from siren_app.player import AudioPlayer, is_clock_trusted, playback_window_command, queue_command, read_playback_window, write_playback_window
 
 
 class FakeConfig:
@@ -34,6 +34,30 @@ def test_build_command_uses_runtime_volume(tmp_path: Path) -> None:
     player.set_volume(35)
 
     assert "--volume=35" in player.build_command()
+
+
+def test_build_command_uses_selected_alsa_device(tmp_path: Path, monkeypatch) -> None:
+    audio = tmp_path / "tone.wav"
+    audio.write_bytes(b"data")
+    device_file = tmp_path / "audio-device"
+    device_file.write_text("plughw:CARD=Device,DEV=0\n", encoding="utf-8")
+    monkeypatch.setattr("siren_app.player.AUDIO_DEVICE_FILE", device_file)
+
+    player = AudioPlayer(
+        FakeConfig(
+            {
+                "audio.file": str(audio),
+                "audio.player": "mpv",
+                "audio.loop": True,
+                "audio.extra_args": ["--no-video", "--ao=alsa"],
+            }
+        )  # type: ignore[arg-type]
+    )
+
+    command = player.build_command()
+
+    assert "--audio-device=alsa/plughw:CARD=Device,DEV=0" in command
+    assert "--ao=alsa" not in command
 
 
 def test_queue_command_accepts_mode_controls_and_volume(tmp_path: Path, monkeypatch) -> None:
@@ -115,3 +139,21 @@ def test_queue_command_accepts_playback_window_payload(tmp_path: Path, monkeypat
     queue_command(command)
 
     assert command_file.read_text(encoding="utf-8") == command + "\n"
+
+
+def test_clock_trust_requires_runtime_marker_when_wittypi_is_enabled(tmp_path: Path, monkeypatch) -> None:
+    trust_file = tmp_path / "clock-trusted"
+    monkeypatch.setattr("siren_app.player.CLOCK_TRUST_FILE", trust_file)
+    config = FakeConfig({"wittypi.enabled": True})
+
+    assert is_clock_trusted(config) is False  # type: ignore[arg-type]
+
+    trust_file.touch()
+
+    assert is_clock_trusted(config) is True  # type: ignore[arg-type]
+
+
+def test_clock_trust_does_not_require_marker_without_wittypi(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("siren_app.player.CLOCK_TRUST_FILE", tmp_path / "missing")
+
+    assert is_clock_trusted(FakeConfig({"wittypi.enabled": False})) is True  # type: ignore[arg-type]

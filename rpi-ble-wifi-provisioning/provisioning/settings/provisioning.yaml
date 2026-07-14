@@ -1,0 +1,19 @@
+provisioning:
+  enabled: true
+  state_dir: "/run/sculpture-ble-provisioning"
+
+network:
+  interface: "wlan0"
+  connectivity_required: true
+  connectivity_timeout_seconds: 30
+
+wifi:
+  connection_name: "provisioned-wifi"
+  autoconnect_priority: 10
+
+ble:
+  provisioning:
+    enabled: true
+    service_uuid: "9f0d0101-7b6d-4d2c-9f4f-6f70726f7601"
+    command_characteristic_uuid: "9f0d0002-7b6d-4d2c-9f4f-6f70726f7601"
+    status_characteristic_uuid: "9f0d0003-7b6d-4d2c-9f4f-6f70726f7601"

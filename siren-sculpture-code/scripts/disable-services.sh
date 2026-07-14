@@ -34,6 +34,8 @@ disable_unit sculpture-ble-control.service
 disable_unit sculpture-audio.service
 disable_unit sculpture-healthcheck.timer
 disable_unit sculpture-healthcheck.service
+disable_unit sculpture-wittypi-clock-sync.timer
+disable_unit sculpture-wittypi-clock-sync.service
 
 # Witty Pi automation and web UI are part of the current deployment footprint.
 # Disable them here only for explicit low-level Bluetooth/power debugging.

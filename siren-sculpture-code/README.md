@@ -14,23 +14,18 @@ Raspberry Pi audio controller for a public, solar-powered sculpture installation
 ## Project Layout
 
 - `siren-app/`: siren-specific audio controller, audio assets, config, scripts, and `systemd` units.
-- `../rpi-ble-wifi-provisioning/`: sibling network-provisioning package mounted into the shared BLE gateway.
-- `scripts/`: root orchestration for first-time Pi initialization, recurring install/update, Bluetooth checks, power cleanup, logs, and release helpers.
-- `config/`: shared host-level config, currently log rotation.
-- `desktop/`: laptop-only Witty Pi reference docs and sample files. This folder is excluded from Pi rsync deploys.
+- `../rpi-ble-wifi-provisioning/`: network-provisioning package mounted into the shared BLE gateway.
+- `../sync-to-pi.sh`, `../pi-status.sh`, and `../sync.env`: laptop-side deployment and status tools.
+- `scripts/`: Pi initialization, recurring install/update, Bluetooth checks, power cleanup, and journal export tools.
+- `../reference/`: laptop-only Witty Pi manuals and vendor samples; it is not copied to the Pi.
 
 ## Fresh Pi Install
 
-On a fresh Raspberry Pi OS Lite install:
+From the shared project root on your Mac, initialize a fresh Raspberry Pi OS
+Lite installation with:
 
 ```bash
-sudo apt update
-sudo apt install -y git
-sudo git clone https://github.com/YOURUSER/sculpture-audio-controller.git /opt/sculpture
-sudo mkdir -p /opt/sculpture/vendor
-sudo git clone https://github.com/YOURUSER/rpi-ble-wifi-provisioning.git /opt/sculpture/vendor/rpi-ble-wifi-provisioning
-cd /opt/sculpture
-sudo ./scripts/initialize-pi.sh
+RUN_INITIALIZE=1 ./sync-to-pi.sh
 ```
 
 The default runtime user is `admin`. Override it if needed:
@@ -79,8 +74,7 @@ sculpture-ble-control.service
 
 That gateway registers one shared service UUID with separate provisioning and
 sculpture command/status characteristics. Their command handlers and response
-state remain independent. Do not enable the standalone
-`rpi-ble-wifi-provisioning.service` on the same Pi.
+state remain independent. There is no separate provisioning daemon.
 
 The sculpture characteristics accept:
 
@@ -100,9 +94,9 @@ diagnostics
 reboot
 ```
 
-Sculpture mode is the normal field mode: playback follows the app schedule and the runtime playback window, and `play_sculpture` / `pause_sculpture` control that normal playback. Testing mode is the manual field-test mode: `test_play`, `test_pause`, and `test_restart` let you exercise audio playback without returning immediately to normal autoplay.
+Sculpture mode is the normal field mode: playback follows the runtime playback window, and `play_sculpture` / `pause_sculpture` control that normal playback. Testing mode is the manual field-test mode: `test_play`, `test_pause`, and `test_restart` let you exercise audio playback without returning immediately to normal autoplay.
 
-`set_playback_window` accepts `start_time` and `stop_time` in `HH:MM` format, for example `08:00` to `21:00`. The window is stored in `/var/lib/sculpture/playback-window.json`. If no playback window is set, sculpture mode does not autoplay. `clear_playback_window` disables sculpture-mode autoplay again. Older aliases such as `play`, `pause`, `restart`, `pause_normal`, and `resume_normal` are still accepted for compatibility. `set_volume` accepts `volume_percent` from 0 to 100.
+`set_playback_window` accepts `start_time` and `stop_time` in `HH:MM` format, for example `08:00` to `21:00`. The window is stored in `/var/lib/sculpture/playback-window.json`. If no playback window is set, sculpture mode does not autoplay. `clear_playback_window` disables sculpture-mode autoplay again. `set_volume` accepts `volume_percent` from 0 to 100.
 
 The `diagnostics` command returns compact service states and recent warnings for light field debugging over Bluetooth.
 
@@ -128,8 +122,10 @@ sudo journalctl -u sculpture-ble-control.service -b -n 100 --no-pager
 sudo systemctl status bluetooth.service
 sudo systemctl status sculpture-audio.service
 sudo systemctl status sculpture-healthcheck.timer
+sudo systemctl status sculpture-wittypi-clock-sync.timer
 sudo systemctl status sculpture-ble-control.service
-journalctl -u sculpture-audio.service -n 100 --no-pager
+sudo journalctl -u sculpture-audio.service -b -n 100 --no-pager
+sudo journalctl -u sculpture-ble-control.service -b -n 100 --no-pager
 ```
 
 To stop and disable sculpture-related services during debugging:
@@ -138,17 +134,19 @@ To stop and disable sculpture-related services during debugging:
 sudo ./scripts/disable-services.sh
 ```
 
-This disables current sculpture services plus Witty Pi/UWI services for low-level debugging. It no longer disables the separate `rpi-ble-wifi-provisioning.service`; install/start now fails with an explicit error if that BLE Wi-Fi service is active or enabled. By default it leaves core `bluetooth.service` and `NetworkManager.service` alone. Disable them only when intentionally testing a fully quiet system:
+This disables current sculpture services plus Witty Pi/UWI services for low-level debugging. By default it leaves core `bluetooth.service` and `NetworkManager.service` alone. Disable them only when intentionally testing a fully quiet system:
 
 ```bash
 sudo INCLUDE_BLUETOOTH=1 INCLUDE_NETWORK_MANAGER=1 ./scripts/disable-services.sh
 ```
 
-Application logs are written to:
+Services write to the systemd journal instead of separate application log files. Follow live audio logs with:
 
-```text
-/var/log/sculpture/sculpture.log
+```bash
+sudo journalctl -u sculpture-audio.service -f
 ```
+
+Run `sudo ./scripts/backup-logs.sh` to export the available sculpture service journals to a compressed file under `/opt/sculpture/log-backups`.
 
 ## Install Updates
 
@@ -156,7 +154,7 @@ Script naming in this repo separates first-time machine setup from normal app up
 
 - `scripts/initialize-pi.sh`: one-time Pi provisioning for packages, Witty Pi, audio, Bluetooth, and systemd.
 - `scripts/install.sh`: recurring app install/update after code has already been copied to the Pi.
-- `sync-to-pi.sh`: laptop-side rsync helper that copies this checkout to the Pi and runs `scripts/install.sh` by default.
+- `../sync-to-pi.sh`: laptop-side rsync helper that copies both application folders to the Pi and runs `scripts/install.sh` by default.
 
 On an existing Pi checkout:
 
@@ -165,16 +163,14 @@ cd /opt/sculpture
 sudo ./scripts/install.sh
 ```
 
-Keep `siren-sculpture-code` and `rpi-ble-wifi-provisioning` next to each
-other inside the shared `siren-project` folder. For direct workstation syncs
-from your Mac, run:
+From the shared project root, run:
 
 ```bash
 ./sync-to-pi.sh
 ```
 
-The sync script reads defaults from `sync.env`, copies both sibling
-repositories into `/opt/sculpture`, and runs
+The sync script reads defaults from `sync.env`, copies both monorepo application
+directories into `/opt/sculpture`, and runs
 `sudo /opt/sculpture/scripts/install.sh` on the Pi by default. Use overrides
 for less common flows:
 
@@ -198,6 +194,19 @@ Witty Pi should own the hard power cycle:
 The vendor installer automatically installs UUGear Web Interface (UWI), which starts a local web server. This project runs the standard Witty Pi installer through `siren-app/scripts/install-wittypi.sh`, then disables the `uwi` service so the web interface is available for manual maintenance but does not run in the field.
 
 The Python audio service also checks the configured active window, but that is a playback guard, not the primary power scheduler.
+
+The installer patches the vendor daemon's clock decision without replacing the
+standard Witty Pi installation. A valid RTC initializes system time at boot. An
+invalid RTC remains untouched until operating-system NTP reports confirmed
+synchronization; only then does `sculpture-wittypi-clock-sync.timer` write the
+corrected system time to the RTC. Scheduled Sculpture Mode playback is disabled
+while `/run/sculpture-clock-trusted` is absent, but manual Testing Mode remains
+available.
+
+Clock safety is independent of Witty Pi power scheduling. Setting
+`APPLY_WITTYPI_SCHEDULE=0` leaves the RTC patch and synchronization timer enabled.
+Set `ENABLE_WITTYPI_CLOCK_SYNC=0` only when intentionally disabling Witty Pi clock
+integration as well.
 
 The tracked schedule is:
 

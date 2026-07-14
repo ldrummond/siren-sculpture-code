@@ -1,15 +1,20 @@
 [Unit]
 Description=Sculpture BLE Provisioning and Audio Control Gateway
-After=bluetooth.service NetworkManager.service
-Wants=bluetooth.service NetworkManager.service
+After=bluetooth.service NetworkManager.service sculpture-audio.service
+Wants=bluetooth.service NetworkManager.service sculpture-audio.service
 
 [Service]
+Group=audio
 WorkingDirectory=/opt/sculpture
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/sculpture/siren-app
 Environment=SCULPTURE_CONFIG=/opt/sculpture/siren-app/config/sculpture.yaml
 Environment=PROVISIONING_CONFIG=/opt/sculpture/vendor/rpi-ble-wifi-provisioning/provisioning/settings/provisioning.yaml
-ExecStartPre=/opt/sculpture/scripts/check-service-conflicts.sh
+Environment=SCULPTURE_COMMAND_FILE=/run/sculpture-audio-controller/command
+Environment=SCULPTURE_STATUS_FILE=/run/sculpture-audio-controller/status.json
+UMask=0002
+StandardOutput=journal
+StandardError=journal
 ExecStart=/opt/sculpture/.venv/bin/python -m siren_app.ble_gateway
 Restart=always
 RestartSec=5

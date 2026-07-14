@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_CONFIG="${DEPLOY_CONFIG:-${REPO_DIR}/sync.env}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_CONFIG="${DEPLOY_CONFIG:-${PROJECT_ROOT}/sync.env}"
 
 ENV_PI_HOST="${PI_HOST:-}"
 ENV_PI_USER="${PI_USER:-}"
@@ -35,6 +35,8 @@ SERVICES=(
   sculpture-audio.service
   sculpture-healthcheck.timer
   sculpture-healthcheck.service
+  sculpture-wittypi-clock-sync.timer
+  sculpture-wittypi-clock-sync.service
   wittypi.service
   uwi.service
 )

@@ -37,7 +37,10 @@ def main() -> int:
 
     status = gather_status(config)
     if not status["clock"]["clock_ok"]:
-        warnings.append(f"Clock drift warning: {status['clock']['drift_seconds']} seconds")
+        if not status["clock"]["clock_trusted"]:
+            warnings.append("Clock is not trusted; scheduled sculpture playback is disabled")
+        else:
+            warnings.append(f"Clock drift warning: {status['clock']['drift_seconds']} seconds")
     if config.get("wittypi.enabled", False) and not status["wittypi"]["detected"]:
         warnings.append("Witty Pi software directory not detected")
 

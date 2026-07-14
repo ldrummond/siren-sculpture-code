@@ -1,41 +1,37 @@
 from __future__ import annotations
 
-import argparse
-import asyncio
 import json
 import logging
 import shutil
 import socket
 import subprocess
+import threading
+import time
+from datetime import datetime, timezone
 from typing import Any
 
-from siren_app.config import AppConfig, load_config
+from siren_app.config import AppConfig
 from siren_app.player import playback_window_command, queue_command
 from siren_app.status import gather_status
+from siren_app.wittypi import set_system_and_rtc_time
 
 
 logger = logging.getLogger(__name__)
 
-MAX_LEGACY_ADVERTISEMENT_NAME_BYTES = 8
+MAX_ADVERTISEMENT_NAME_BYTES = 8
 BLE_STARTUP_ATTEMPTS = 10
 BLE_STARTUP_RETRY_SECONDS = 2
-MAX_DIAGNOSTIC_TEXT_CHARS = 1200
+MAX_BLE_JSON_BYTES = 480
 
 AUDIO_STATUS_KEYS = (
     "state",
     "file_exists",
-    "file_size_mb",
-    "loop",
     "error",
-    "manual_override",
     "manual_paused",
     "control_mode",
-    "supervisor_mode",
-    "updated_at",
     "normal_paused",
     "volume_percent",
     "playback_window",
-    "config_schedule_active",
 )
 
 DIAGNOSTIC_SERVICES = (
@@ -47,7 +43,16 @@ DIAGNOSTIC_SERVICES = (
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytearray:
-    return bytearray(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    if len(encoded) <= MAX_BLE_JSON_BYTES:
+        return bytearray(encoded)
+    logger.warning("BLE JSON response is too large: %s bytes", len(encoded))
+    fallback = {
+        "ok": False,
+        "error": "Pi response exceeded the BLE size limit",
+        "response_bytes": len(encoded),
+    }
+    return bytearray(json.dumps(fallback, separators=(",", ":")).encode("utf-8"))
 
 
 class SirenBleControlService:
@@ -57,6 +62,8 @@ class SirenBleControlService:
         self.service_uuid = str(config.get("ble.control.service_uuid"))
         self.command_uuid = str(config.get("ble.control.command_characteristic_uuid"))
         self.status_uuid = str(config.get("ble.control.status_characteristic_uuid"))
+        self._clock_sync_lock = threading.Lock()
+        self._clock_sync_status: dict[str, Any] = {"state": "idle"}
 
     def read_request(self, characteristic: Any, **_kwargs: Any) -> bytearray:
         uuid = _characteristic_uuid(characteristic)
@@ -66,7 +73,7 @@ class SirenBleControlService:
 
     def status_response(self) -> bytearray:
         try:
-            return _json_bytes({"status": self._status(), "last_response": _last_response_summary(self.last_response)})
+            return _json_bytes({"status": self._status()})
         except Exception as exc:
             logger.exception("Unable to build BLE status response")
             return _json_bytes({"ok": False, "error": f"status unavailable: {exc}"})
@@ -88,134 +95,91 @@ class SirenBleControlService:
         action = str(command.get("action", "")).strip().lower()
         if action == "status":
             return {"ok": True, "status": self._status()}
-        if action in {"diagnostics", "debug", "logs", "service_status"}:
+        if action == "network_status":
+            return {"ok": True, "wifi": _wifi_network_status()}
+        if action == "set_device_time":
+            return self._start_clock_sync(_command_epoch_seconds(command))
+        if action == "clock_sync_status":
+            return self._get_clock_sync_status()
+        if action == "diagnostics":
             return {"ok": True, "diagnostics": _gather_diagnostics()}
-        if action in {"reboot", "reboot_device", "restart_device"}:
+        if action == "reboot":
             _schedule_reboot()
             return {"ok": True, "queued": "reboot", "message": "device reboot requested"}
-        if action in {"set_volume", "volume"}:
+        if action == "set_volume":
             volume = _command_volume(command)
             queue_command(f"volume:{volume}")
             return {"ok": True, "queued": "set_volume", "volume_percent": volume}
-        if action in {"set_playback_window", "set_playback_range"}:
+        if action == "set_playback_window":
             payload = _playback_window_payload(command)
             queue_command(playback_window_command(payload))
             return {"ok": True, "queued": "set_playback_window", "playback_window": payload}
-        if action in {"clear_playback_window", "disable_playback_window"}:
+        if action == "clear_playback_window":
             payload = {"enabled": False}
             queue_command(playback_window_command(payload))
             return {"ok": True, "queued": "clear_playback_window", "playback_window": payload}
-        command_aliases = {
-            "testing_mode": "testing_mode",
-            "enter_testing_mode": "testing_mode",
-            "manual_mode": "testing_mode",
-            "sculpture_mode": "sculpture_mode",
-            "enter_sculpture_mode": "sculpture_mode",
-            "normal_mode": "sculpture_mode",
-            "play": "test_play",
-            "test_play": "test_play",
-            "pause": "test_pause",
-            "pause_manual": "test_pause",
-            "test_pause": "test_pause",
-            "restart": "test_restart",
-            "test_restart": "test_restart",
-            "resume": "test_play",
-            "stop": "pause_sculpture",
-            "pause_normal": "pause_sculpture",
-            "normal_pause": "pause_sculpture",
-            "pause_sculpture": "pause_sculpture",
-            "play_sculpture": "play_sculpture",
-            "resume_normal": "play_sculpture",
-            "resume_normal_playback": "play_sculpture",
-            "normal": "play_sculpture",
+        audio_actions = {
+            "testing_mode",
+            "sculpture_mode",
+            "test_play",
+            "test_pause",
+            "test_restart",
+            "play_sculpture",
+            "pause_sculpture",
         }
-        if action in command_aliases:
-            queued = command_aliases[action]
-            queue_command(queued)
-            return {"ok": True, "queued": queued}
+        if action in audio_actions:
+            queue_command(action)
+            return {"ok": True, "queued": action}
         raise ValueError(f"unsupported action: {action}")
+
+    def _start_clock_sync(self, epoch_seconds: float) -> dict[str, Any]:
+        with self._clock_sync_lock:
+            if self._clock_sync_status.get("state") == "pending":
+                return {"ok": False, "error": "clock synchronization is already running", "clock_sync": dict(self._clock_sync_status)}
+            self._clock_sync_status = {"state": "pending", "source": "ble-client"}
+
+        received_at = time.monotonic()
+        worker = threading.Thread(
+            target=self._run_clock_sync,
+            args=(epoch_seconds, received_at),
+            name="sculpture-clock-sync",
+            daemon=True,
+        )
+        worker.start()
+        return {"ok": True, "clock_sync": {"state": "pending", "source": "ble-client"}}
+
+    def _run_clock_sync(self, epoch_seconds: float, received_at: float) -> None:
+        adjusted_epoch = epoch_seconds + max(0.0, time.monotonic() - received_at)
+        try:
+            result = set_system_and_rtc_time(self.config, adjusted_epoch, source="ble-client")
+            status = {"state": "success", **result}
+        except Exception as exc:
+            logger.exception("BLE clock synchronization failed")
+            status = {"state": "error", "error": _truncate_text(str(exc), 120)}
+        with self._clock_sync_lock:
+            self._clock_sync_status = status
+
+    def _get_clock_sync_status(self) -> dict[str, Any]:
+        with self._clock_sync_lock:
+            status = dict(self._clock_sync_status)
+        return {"ok": status.get("state") != "error", "clock_sync": status}
 
     def _status(self) -> dict[str, Any]:
         status = gather_status(self.config)
         audio = status["audio"]
         return {
-            "project": status["project"],
-            "audio": {key: audio.get(key) for key in AUDIO_STATUS_KEYS if key in audio},
-            "clock": status["clock"],
+            "audio": _compact_audio_status(audio),
+            "clock": _compact_clock_status(status.get("clock", {})),
             "wittypi": _compact_wittypi_status(status.get("wittypi", {})),
         }
-
-
-async def run_server() -> None:
-    config = load_config()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    if not bool(config.get("ble.control.enabled", True)):
-        logger.info("Siren BLE control service disabled")
-        return
-
-    wifi_state = _wifi_power_state()
-    if wifi_state["powered"]:
-        logger.warning(
-            "Wi-Fi appears to be enabled while BLE control is running. Disable Wi-Fi after testing to reduce power use. state=%s",
-            wifi_state,
-        )
-
-    BlessServer, GATTCharacteristicProperties, GATTAttributePermissions = _load_bless_backend()
-    _disable_bluez_experimental_advertisement_properties()
-
-    service = SirenBleControlService(config)
-    device_name = _bluetooth_device_name(config)
-    adapter = str(config.get("ble.control.adapter", "hci0")).strip() or "hci0"
-    logger.info("Starting BLE advertisement adapter=%s name=%s service_uuid=%s", adapter, device_name, service.service_uuid)
-
-    server = None
-    for attempt in range(1, BLE_STARTUP_ATTEMPTS + 1):
-        try:
-            server = BlessServer(name=device_name, adapter=adapter)
-            server.read_request_func = service.read_request
-            server.write_request_func = service.write_request
-            await server.add_new_service(service.service_uuid)
-            await server.add_new_characteristic(
-                service.service_uuid,
-                service.command_uuid,
-                GATTCharacteristicProperties.write | GATTCharacteristicProperties.read,
-                service.last_response,
-                GATTAttributePermissions.writeable | GATTAttributePermissions.readable,
-            )
-            await server.add_new_characteristic(
-                service.service_uuid,
-                service.status_uuid,
-                GATTCharacteristicProperties.read,
-                service.status_response(),
-                GATTAttributePermissions.readable,
-            )
-            await server.start()
-            break
-        except Exception as exc:
-            if attempt >= BLE_STARTUP_ATTEMPTS:
-                raise RuntimeError(
-                    f"BlueZ failed to start sculpture BLE control on adapter {adapter}. Confirm bluetooth.service "
-                    "is running, the adapter exists in 'bluetoothctl list', no other BLE service is advertising, "
-                    f"and the advertised name is at most {MAX_LEGACY_ADVERTISEMENT_NAME_BYTES} UTF-8 bytes."
-                ) from exc
-            logger.warning("BLE startup attempt %s/%s failed on adapter %s: %s", attempt, BLE_STARTUP_ATTEMPTS, adapter, exc)
-            await asyncio.sleep(BLE_STARTUP_RETRY_SECONDS)
-
-    logger.info("Siren BLE control GATT service started")
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        if server is not None:
-            await server.stop()
 
 
 def _bluetooth_device_name(config: AppConfig) -> str:
     configured = str(config.get("ble.control.device_name", "device")).strip()
     if configured and configured.lower() not in {"auto", "device", "hostname"}:
-        return _truncate_utf8(_clean_ble_name(configured, "Siren"), MAX_LEGACY_ADVERTISEMENT_NAME_BYTES)
+        return _truncate_utf8(_clean_ble_name(configured, "Siren"), MAX_ADVERTISEMENT_NAME_BYTES)
     hostname = socket.gethostname().split(".", 1)[0].strip()
-    return _truncate_utf8(_clean_ble_name(hostname, "Siren"), MAX_LEGACY_ADVERTISEMENT_NAME_BYTES)
+    return _truncate_utf8(_clean_ble_name(hostname, "Siren"), MAX_ADVERTISEMENT_NAME_BYTES)
 
 
 def _clean_ble_name(value: str, fallback: str) -> str:
@@ -234,11 +198,31 @@ def _truncate_utf8(value: str, max_bytes: int) -> str:
 
 def _compact_wittypi_status(wittypi: dict[str, Any]) -> dict[str, Any]:
     return {
-        "enabled": wittypi.get("enabled"),
-        "detected": wittypi.get("detected"),
         "temperature_c": wittypi.get("temperature_c"),
         "temperature_f": wittypi.get("temperature_f"),
         "rtc_time": wittypi.get("rtc_time"),
+    }
+
+
+def _compact_audio_status(audio: dict[str, Any]) -> dict[str, Any]:
+    compact = {key: audio.get(key) for key in AUDIO_STATUS_KEYS if key in audio}
+    if compact.get("error"):
+        compact["error"] = _truncate_text(str(compact["error"]), 24)
+    playback_window = compact.get("playback_window")
+    if isinstance(playback_window, dict):
+        compact["playback_window"] = {
+            key: playback_window.get(key)
+            for key in ("enabled", "start_time", "stop_time", "active")
+            if key in playback_window
+        }
+    return compact
+
+
+def _compact_clock_status(clock: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: clock.get(key)
+        for key in ("system_time", "clock_trusted", "clock_ok")
+        if key in clock
     }
 
 
@@ -275,7 +259,7 @@ def _command_time(command: dict[str, Any], key: str) -> str:
 
 
 def _command_volume(command: dict[str, Any]) -> int:
-    value = command.get("volume_percent", command.get("volume"))
+    value = command.get("volume_percent")
     if value is None:
         raise ValueError("volume_percent is required")
     try:
@@ -285,6 +269,20 @@ def _command_volume(command: dict[str, Any]) -> int:
     if not 0 <= volume <= 100:
         raise ValueError("volume_percent must be between 0 and 100")
     return volume
+
+
+def _command_epoch_seconds(command: dict[str, Any]) -> float:
+    value = command.get("epoch_ms")
+    if value is None:
+        raise ValueError("epoch_ms is required")
+    try:
+        epoch_seconds = float(value) / 1000.0
+        timestamp = datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError) as exc:
+        raise ValueError("epoch_ms must be a valid Unix timestamp") from exc
+    if not 2020 <= timestamp.year <= 2099:
+        raise ValueError("time must be between 2020 and 2099")
+    return epoch_seconds
 
 
 def _schedule_reboot() -> None:
@@ -338,6 +336,7 @@ def _gather_diagnostics() -> dict[str, Any]:
             "ble": _service_state("sculpture-ble-control.service"),
             "audio": _service_state("sculpture-audio.service"),
             "health": _service_state("sculpture-healthcheck.timer"),
+            "clock": _service_state("sculpture-wittypi-clock-sync.timer"),
         },
         "err": {
             "ble": _journal_tail("sculpture-ble-control.service"),
@@ -353,16 +352,42 @@ def _service_state(service: str) -> str:
 
 
 def _journal_tail(service: str) -> str:
-    return _run_command(["journalctl", "-u", service, "-b", "-p", "warning", "-n", "1", "--no-pager", "--output=cat"], max_chars=90)
+    return _run_command(["journalctl", "-u", service, "-b", "-p", "warning", "-n", "1", "--no-pager", "--output=cat"], max_chars=72)
 
 
 def _wifi_power_state() -> dict[str, Any]:
     radio = _run_command(["nmcli", "radio", "wifi"])
     rfkill = _run_command(["rfkill", "list", "wifi"])
-    powered = radio.strip().lower() == "enabled"
-    if "Soft blocked: no" in rfkill and "Hard blocked: no" in rfkill:
+    radio_state = radio.strip().lower()
+    if radio_state in {"enabled", "disabled"}:
+        powered = radio_state == "enabled"
+    else:
+        powered = False
+    if "Soft blocked: yes" in rfkill or "Hard blocked: yes" in rfkill:
+        powered = False
+    elif radio_state not in {"enabled", "disabled"} and "Soft blocked: no" in rfkill and "Hard blocked: no" in rfkill:
         powered = True
     return {"powered": powered, "nmcli_radio": radio, "rfkill": rfkill}
+
+
+def _wifi_network_status() -> dict[str, Any]:
+    powered = _wifi_power_state()["powered"]
+    if not powered:
+        return {"enabled": False, "connected": False, "ssid": None}
+
+    output = _run_command(
+        ["nmcli", "--terse", "--escape", "no", "--fields", "IN-USE,SSID", "device", "wifi", "list", "--rescan", "no"],
+        max_chars=512,
+    )
+    for line in output.splitlines():
+        fields = line.split(":", 1)
+        if len(fields) != 2:
+            continue
+        in_use, network_name = fields
+        if in_use == "*":
+            ssid = network_name.strip()
+            return {"enabled": True, "connected": True, "ssid": ssid if ssid and ssid != "--" else None}
+    return {"enabled": True, "connected": False, "ssid": None}
 
 
 def _run_command(command: list[str], timeout: float = 3, max_chars: int = 800) -> str:
@@ -409,14 +434,3 @@ def _last_response_summary(value: bytearray) -> dict[str, Any]:
         summary["ok"] = bool(response.get("ok", True))
     summary["message"] = "status returned"
     return summary
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Siren BLE control service")
-    parser.parse_args()
-    asyncio.run(run_server())
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
