@@ -12,8 +12,6 @@ ENV_PI_HOST="${PI_HOST:-}"
 ENV_PI_USER="${PI_USER:-}"
 ENV_SSH_PORT="${SSH_PORT:-}"
 ENV_APP_DIR="${APP_DIR:-}"
-ENV_RUN_INITIALIZE="${RUN_INITIALIZE:-}"
-ENV_RUN_INSTALL="${RUN_INSTALL:-}"
 ENV_SYNC_AUDIO="${SYNC_AUDIO:-}"
 
 if [[ -f "${DEPLOY_CONFIG}" ]]; then
@@ -22,15 +20,54 @@ if [[ -f "${DEPLOY_CONFIG}" ]]; then
 fi
 
 # Laptop-side sync helper. Run this from your Mac to copy the current checkout
-# to the Pi, then run the Pi-side install script by default.
+# to the Pi, then optionally initialize the Pi or install and restart services.
 PI_HOST="${ENV_PI_HOST:-${PI_HOST:-}}"
 PI_USER="${ENV_PI_USER:-${PI_USER:-}}"
 SSH_PORT="${ENV_SSH_PORT:-${SSH_PORT:-}}"
 APP_DIR="${ENV_APP_DIR:-${APP_DIR:-/opt/sculpture}}"
 REMOTE_PROVISIONING_DIR="${APP_DIR}/vendor/rpi-ble-wifi-provisioning"
-RUN_INITIALIZE="${ENV_RUN_INITIALIZE:-${RUN_INITIALIZE:-0}}"
-RUN_INSTALL="${ENV_RUN_INSTALL:-${RUN_INSTALL:-1}}"
 SYNC_AUDIO="${ENV_SYNC_AUDIO:-${SYNC_AUDIO:-1}}"
+
+prompt_yes_no() {
+  local prompt="$1"
+  local answer
+
+  while true; do
+    read -r -p "${prompt} (yes/no) [no]: " answer
+    case "${answer}" in
+      y|Y|yes|Yes|YES)
+        return 0
+        ;;
+      ""|n|N|no|No|NO)
+        return 1
+        ;;
+      *)
+        echo "Please answer yes or no." >&2
+        ;;
+    esac
+  done
+}
+
+if [[ -n "${PI_HOST}" ]]; then
+  read -r -p "Pi hostname or IP [${PI_HOST}]: " entered_host
+  PI_HOST="${entered_host:-${PI_HOST}}"
+else
+  read -r -p "Pi hostname or IP: " PI_HOST
+fi
+
+RUN_INITIALIZE=0
+RUN_INSTALL=0
+if prompt_yes_no "Is this a fresh install? If so, run the initializer script?"; then
+  RUN_INITIALIZE=1
+fi
+if prompt_yes_no "Deploy and restart services after sync?"; then
+  RUN_INSTALL=1
+fi
+
+if [[ "${RUN_INITIALIZE}" == "1" && "${RUN_INSTALL}" == "1" ]]; then
+  echo "Fresh install selected; the initializer already installs and starts services."
+  RUN_INSTALL=0
+fi
 
 missing=()
 [[ -n "${PI_HOST}" ]] || missing+=(PI_HOST)

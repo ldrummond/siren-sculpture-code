@@ -64,6 +64,12 @@ class SirenBleControlService:
         self.status_uuid = str(config.get("ble.control.status_characteristic_uuid"))
         self._clock_sync_lock = threading.Lock()
         self._clock_sync_status: dict[str, Any] = {"state": "idle"}
+        self._wifi_power_lock = threading.Lock()
+        self._wifi_power_status: dict[str, Any] = {"state": "idle"}
+        self._status_cache_lock = threading.Lock()
+        self._status_cache = _json_bytes({"ok": True, "status": {"refreshing": True}})
+        self._status_refresh_stop = threading.Event()
+        self._status_refresh_thread: threading.Thread | None = None
 
     def read_request(self, characteristic: Any, **_kwargs: Any) -> bytearray:
         uuid = _characteristic_uuid(characteristic)
@@ -72,11 +78,38 @@ class SirenBleControlService:
         return self.last_response
 
     def status_response(self) -> bytearray:
+        with self._status_cache_lock:
+            return bytearray(self._status_cache)
+
+    def refresh_status_cache(self) -> None:
         try:
-            return _json_bytes({"status": self._status()})
+            response = _json_bytes({"status": self._status()})
         except Exception as exc:
             logger.exception("Unable to build BLE status response")
-            return _json_bytes({"ok": False, "error": f"status unavailable: {exc}"})
+            response = _json_bytes({"ok": False, "error": f"status unavailable: {exc}"})
+        with self._status_cache_lock:
+            self._status_cache = response
+
+    def start_status_refresh(self) -> None:
+        if self._status_refresh_thread and self._status_refresh_thread.is_alive():
+            return
+        self._status_refresh_stop.clear()
+        self._status_refresh_thread = threading.Thread(
+            target=self._status_refresh_loop,
+            name="sculpture-status-refresh",
+            daemon=True,
+        )
+        self._status_refresh_thread.start()
+
+    def stop_status_refresh(self) -> None:
+        self._status_refresh_stop.set()
+        if self._status_refresh_thread:
+            self._status_refresh_thread.join(timeout=1)
+
+    def _status_refresh_loop(self) -> None:
+        refresh_seconds = max(1.0, float(self.config.get("ble.control.status_refresh_seconds", 5)))
+        while not self._status_refresh_stop.wait(refresh_seconds):
+            self.refresh_status_cache()
 
     def write_request(self, characteristic: Any, value: bytearray, **_kwargs: Any) -> None:
         uuid = _characteristic_uuid(characteristic)
@@ -94,9 +127,13 @@ class SirenBleControlService:
     def _handle_command(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command.get("action", "")).strip().lower()
         if action == "status":
-            return {"ok": True, "status": self._status()}
+            return _decode_response(self.status_response())
         if action == "network_status":
             return {"ok": True, "wifi": _wifi_network_status()}
+        if action == "set_wifi_power":
+            return self._start_wifi_power_change(_command_wifi_enabled(command))
+        if action == "wifi_power_status":
+            return self._get_wifi_power_change_status()
         if action == "set_device_time":
             return self._start_clock_sync(_command_epoch_seconds(command))
         if action == "clock_sync_status":
@@ -163,6 +200,40 @@ class SirenBleControlService:
         with self._clock_sync_lock:
             status = dict(self._clock_sync_status)
         return {"ok": status.get("state") != "error", "clock_sync": status}
+
+    def _start_wifi_power_change(self, enabled: bool) -> dict[str, Any]:
+        with self._wifi_power_lock:
+            if self._wifi_power_status.get("state") == "pending":
+                return {
+                    "ok": False,
+                    "error": "Wi-Fi power change is already running",
+                    "wifi_power": dict(self._wifi_power_status),
+                }
+            self._wifi_power_status = {"state": "pending", "enabled": enabled}
+
+        worker = threading.Thread(
+            target=self._run_wifi_power_change,
+            args=(enabled,),
+            name="sculpture-wifi-power",
+            daemon=True,
+        )
+        worker.start()
+        return {"ok": True, "wifi_power": {"state": "pending", "enabled": enabled}}
+
+    def _run_wifi_power_change(self, enabled: bool) -> None:
+        try:
+            wifi = _set_wifi_power(enabled)
+            status = {"state": "success", "enabled": enabled, "wifi": wifi}
+        except Exception as exc:
+            logger.exception("BLE Wi-Fi power change failed")
+            status = {"state": "error", "enabled": enabled, "error": _truncate_text(str(exc), 120)}
+        with self._wifi_power_lock:
+            self._wifi_power_status = status
+
+    def _get_wifi_power_change_status(self) -> dict[str, Any]:
+        with self._wifi_power_lock:
+            status = dict(self._wifi_power_status)
+        return {"ok": status.get("state") != "error", "wifi_power": status}
 
     def _status(self) -> dict[str, Any]:
         status = gather_status(self.config)
@@ -269,6 +340,13 @@ def _command_volume(command: dict[str, Any]) -> int:
     if not 0 <= volume <= 100:
         raise ValueError("volume_percent must be between 0 and 100")
     return volume
+
+
+def _command_wifi_enabled(command: dict[str, Any]) -> bool:
+    enabled = command.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be true or false")
+    return enabled
 
 
 def _command_epoch_seconds(command: dict[str, Any]) -> float:
@@ -388,6 +466,36 @@ def _wifi_network_status() -> dict[str, Any]:
             ssid = network_name.strip()
             return {"enabled": True, "connected": True, "ssid": ssid if ssid and ssid != "--" else None}
     return {"enabled": True, "connected": False, "ssid": None}
+
+
+def _set_wifi_power(enabled: bool) -> dict[str, Any]:
+    if shutil.which("nmcli") is None:
+        raise RuntimeError("nmcli is unavailable; NetworkManager is required")
+
+    if enabled:
+        if shutil.which("rfkill") is not None:
+            _run_checked_command(["rfkill", "unblock", "wifi"])
+        _run_checked_command(["nmcli", "radio", "wifi", "on"])
+    else:
+        _run_checked_command(["nmcli", "radio", "wifi", "off"])
+        if shutil.which("rfkill") is not None:
+            _run_checked_command(["rfkill", "block", "wifi"])
+
+    wifi = _wifi_network_status()
+    if wifi["enabled"] != enabled:
+        requested = "on" if enabled else "off"
+        raise RuntimeError(f"Wi-Fi did not turn {requested}")
+    return wifi
+
+
+def _run_checked_command(command: list[str], timeout: float = 10) -> None:
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Unable to run {' '.join(command)}: {exc}") from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "command failed").strip()
+        raise RuntimeError(f"{' '.join(command)} failed: {_truncate_text(message, 120)}")
 
 
 def _run_command(command: list[str], timeout: float = 3, max_chars: int = 800) -> str:

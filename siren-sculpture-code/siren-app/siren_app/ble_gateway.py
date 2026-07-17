@@ -110,6 +110,7 @@ async def run_server() -> None:
 
     provisioning = ProvisioningBleService(provisioning_config)
     sculpture = SirenBleControlService(sculpture_config)
+    sculpture.refresh_status_cache()
     gateway = DeviceBleGateway(provisioning, sculpture)
     device_name = _bluetooth_device_name(sculpture_config)
     adapter = str(sculpture_config.get("ble.control.adapter", "hci0")).strip() or "hci0"
@@ -157,6 +158,7 @@ async def run_server() -> None:
                 permissions.readable,
             )
             await server.start()
+            sculpture.start_status_refresh()
             break
         except Exception as exc:
             if attempt >= BLE_STARTUP_ATTEMPTS:
@@ -179,6 +181,7 @@ async def run_server() -> None:
         while True:
             await asyncio.sleep(3600)
     finally:
+        sculpture.stop_status_refresh()
         if server is not None:
             await server.stop()
 

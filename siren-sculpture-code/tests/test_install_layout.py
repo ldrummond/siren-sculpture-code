@@ -30,3 +30,16 @@ def test_standalone_provisioning_lifecycle_is_absent() -> None:
     )
 
     assert not any(path.exists() for path in obsolete)
+
+
+def test_initializer_requires_known_working_ble_kernel_without_installing_it() -> None:
+    initializer = (SCULPTURE_ROOT / "scripts" / "initialize-pi.sh").read_text()
+
+    assert "7a0137617dd4a8496e566d23c01219923c409a79" in initializer
+    assert "6.18.38-v7+" in initializer
+    assert "check_pinned_rpi_firmware" in initializer
+    assert "Initialization stopped" in initializer
+    assert "install_pinned_rpi_firmware" not in initializer
+    package_block = initializer.split("apt install -y \\\n", 1)[1].split("\n\nmkdir -p", 1)[0]
+    assert "rpi-update" not in package_block
+    assert "SKIP_BOOTLOADER=1" in initializer

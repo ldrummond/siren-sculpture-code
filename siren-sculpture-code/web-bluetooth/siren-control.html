@@ -177,6 +177,9 @@
         <button class="secondary" data-action="status" onclick="refreshStatus()">Status</button>
       </div>
       <div class="row single-action">
+        <button class="secondary" id="wifiPowerToggle" data-action="wifi_power_toggle" onclick="toggleWifiPower()">Wi-Fi Unavailable</button>
+      </div>
+      <div class="row single-action">
         <button class="secondary" data-action="diagnostics" title="Read service states, Bluetooth and Wi-Fi power, kernel version, and recent warnings" onclick="sendCommand('diagnostics')">Diagnostics</button>
       </div>
       <div class="row single-action">
@@ -237,8 +240,10 @@ let lastAction = null;
 let currentControlMode = 'unknown';
 let currentSculpturePaused = true;
 let currentTestingPaused = true;
+let currentWifiEnabled = null;
 let pendingVolume = null;
 let volumeConfirmationTimer = null;
+let operationQueue = Promise.resolve();
 
 function setBusy(isBusy, message = '') {
   pendingRequests = Math.max(0, pendingRequests + (isBusy ? 1 : -1));
@@ -266,7 +271,8 @@ function updateButtonStates() {
     const disconnected = !connected && action !== 'connect';
     const testingStateConflict = currentControlMode === 'testing'
       && ((action === 'test_play' && !currentTestingPaused) || (action === 'test_pause' && currentTestingPaused));
-    button.disabled = busy || disconnected || (action === 'connect' && connected) || testingStateConflict;
+    const wifiStateUnknown = action === 'wifi_power_toggle' && typeof currentWifiEnabled !== 'boolean';
+    button.disabled = busy || disconnected || (action === 'connect' && connected) || testingStateConflict || wifiStateUnknown;
   });
   document.querySelectorAll('input').forEach((input) => {
     input.disabled = busy || !connected || (input.id === 'volumeControl' && pendingVolume !== null);
@@ -288,18 +294,22 @@ function onDisconnected() {
   setConnection('Disconnected');
 }
 
-async function withBusy(message, task) {
-  setBusy(true, message);
-  try {
-    return await task();
-  } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
-    updateMode({ error: messageText });
-    log({ ok: false, error: messageText });
-    throw error;
-  } finally {
-    setBusy(false);
-  }
+function withBusy(message, task) {
+  const operation = operationQueue.catch(() => {}).then(async () => {
+    setBusy(true, message);
+    try {
+      return await task();
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      updateMode({ error: messageText });
+      log({ ok: false, error: messageText });
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  });
+  operationQueue = operation.catch(() => {});
+  return operation;
 }
 
 async function connectBle() {
@@ -378,9 +388,23 @@ function applyCommandResponse(action, payload, response) {
 
 async function readCommandResponse() {
   if (!commandCharacteristic) return { ok: false, error: 'Not connected' };
-  const value = await commandCharacteristic.readValue();
-  console.log(value);
+  const value = await readGattValue(commandCharacteristic, 'command response');
   return parseJsonValue(value);
+}
+
+async function readGattValue(characteristic, label) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await characteristic.readValue();
+    } catch (error) {
+      lastError = error;
+      if (!device || !device.gatt || !device.gatt.connected || attempt === 3) break;
+      await sleep(attempt * 250);
+    }
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Unable to read ${label} after 3 attempts: ${detail}`);
 }
 
 async function refreshNetworkStatus() {
@@ -396,6 +420,47 @@ async function refreshNetworkStatus() {
   }
   updateNetworkStatus(null);
   return null;
+}
+
+async function toggleWifiPower() {
+  await ensureConnected();
+  if (typeof currentWifiEnabled !== 'boolean') {
+    await refreshNetworkStatus();
+  }
+  if (typeof currentWifiEnabled !== 'boolean') {
+    log({ ok: false, error: 'Unable to determine the current Wi-Fi power state' });
+    return;
+  }
+
+  const enableWifi = !currentWifiEnabled;
+  if (!enableWifi && !window.confirm(
+    'Turn off Wi-Fi?\n\nBluetooth control will remain available, but SSH and other network access will disconnect.'
+  )) return;
+
+  await withBusy(`${enableWifi ? 'Turning on' : 'Turning off'} Wi-Fi...`, async () => {
+    await commandCharacteristic.writeValue(encoder.encode(JSON.stringify({
+      action: 'set_wifi_power',
+      enabled: enableWifi
+    })));
+    let response = await readCommandResponse();
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const power = response && response.wifi_power ? response.wifi_power : {};
+      if (power.state === 'success') {
+        updateNetworkStatus(power.wifi);
+        log({ ok: true, message: `Wi-Fi turned ${enableWifi ? 'on' : 'off'}`, wifi: power.wifi });
+        if (enableWifi) window.setTimeout(() => refreshNetworkStatusQueued().catch(() => {}), 5000);
+        return;
+      }
+      if (power.state === 'error' || (response && response.ok === false)) {
+        throw new Error(power.error || response.error || 'Wi-Fi power change failed');
+      }
+      await sleep(250);
+      await commandCharacteristic.writeValue(encoder.encode(JSON.stringify({ action: 'wifi_power_status' })));
+      response = await readCommandResponse();
+    }
+    throw new Error('Wi-Fi power change did not finish within 10 seconds');
+  });
 }
 
 async function setDeviceTimeFromBrowser() {
@@ -446,15 +511,19 @@ function updateNetworkStatus(wifi) {
   networkChip.classList.remove('on', 'off', 'warning');
 
   if (!wifi || typeof wifi.enabled !== 'boolean') {
+    currentWifiEnabled = null;
     powerChip.textContent = 'Wi-Fi Unknown';
     networkChip.hidden = true;
+    updateWifiPowerButton();
     return;
   }
 
+  currentWifiEnabled = wifi.enabled;
   if (!wifi.enabled) {
     powerChip.textContent = 'Wi-Fi Off';
     powerChip.classList.add('off');
     networkChip.hidden = true;
+    updateWifiPowerButton();
     return;
   }
 
@@ -468,6 +537,15 @@ function updateNetworkStatus(wifi) {
     networkChip.textContent = 'Not connected';
     networkChip.classList.add('warning');
   }
+  updateWifiPowerButton();
+}
+
+function updateWifiPowerButton() {
+  const button = document.getElementById('wifiPowerToggle');
+  button.textContent = typeof currentWifiEnabled === 'boolean'
+    ? `Turn Wi-Fi ${currentWifiEnabled ? 'Off' : 'On'}`
+    : 'Wi-Fi Unavailable';
+  updateButtonStates();
 }
 
 function previewVolume() {
@@ -561,6 +639,11 @@ async function refreshStatus() {
   });
 }
 
+async function refreshNetworkStatusQueued() {
+  await ensureConnected();
+  return withBusy('Refreshing Wi-Fi status...', async () => refreshNetworkStatus());
+}
+
 async function ensureConnected() {
   if (commandCharacteristic && statusCharacteristic) return;
   await connectBle();
@@ -568,7 +651,7 @@ async function ensureConnected() {
 
 async function readStatus() {
   if (!statusCharacteristic) return { ok: false, error: 'Not connected' };
-  const value = await statusCharacteristic.readValue();
+  const value = await readGattValue(statusCharacteristic, 'sculpture status');
   return parseJsonValue(value);
 }
 

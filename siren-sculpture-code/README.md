@@ -25,8 +25,19 @@ From the shared project root on your Mac, initialize a fresh Raspberry Pi OS
 Lite installation with:
 
 ```bash
-RUN_INITIALIZE=1 ./sync-to-pi.sh
+./sync-to-pi.sh
 ```
+
+Enter the Pi hostname or IP address, then answer `yes` to the fresh-install
+prompt. The initializer installs and starts the services, so a separate deploy
+step is not needed during the same sync.
+
+The initializer does not install or update Raspberry Pi firmware. Before making
+any system changes, it requires pinned firmware revision
+`7a0137617dd4a8496e566d23c01219923c409a79` and the tested `6.18.38-v7+`
+32-bit kernel. If either does not match, initialization stops and prints the
+manual `apt install rpi-update` and pinned `rpi-update` commands. Reboot after
+installing firmware, confirm `uname -r`, and run the initializer again.
 
 The default runtime user is `admin`. Override it if needed:
 
@@ -34,7 +45,7 @@ The default runtime user is `admin`. Override it if needed:
 sudo SCULPTURE_USER=myuser ./scripts/initialize-pi.sh
 ```
 
-The initializer enables the BLE control service and installs standard Witty Pi software with UWI disabled. It also runs a Bluetooth preflight check and fails fast on Raspberry Pi kernel `6.12.93*`, which is known to break BlueZ D-Bus BLE advertising.
+The initializer enables the BLE control service and installs standard Witty Pi software with UWI disabled. It also runs a live Bluetooth advertising preflight check and fails fast on Raspberry Pi kernel `6.12.93*` and affected `6.18.*` builds, which are known to break BlueZ D-Bus BLE advertising.
 
 For field power saving, disable Wi-Fi after testing is complete:
 
@@ -53,7 +64,7 @@ sudo reboot
 The default config expects:
 
 ```text
-/opt/sculpture/siren-app/assets/audio/siren-5.wav
+/opt/sculpture/siren-app/assets/audio/siren-30.wav
 ```
 
 Large audio files are ignored by Git. Copy them with `scp`, rsync, a USB drive, Git LFS, or a GitHub Release asset.
@@ -90,6 +101,9 @@ set_playback_window
 clear_playback_window
 set_volume
 status
+network_status
+set_wifi_power
+wifi_power_status
 diagnostics
 reboot
 ```
@@ -99,6 +113,11 @@ Sculpture mode is the normal field mode: playback follows the runtime playback w
 `set_playback_window` accepts `start_time` and `stop_time` in `HH:MM` format, for example `08:00` to `21:00`. The window is stored in `/var/lib/sculpture/playback-window.json`. If no playback window is set, sculpture mode does not autoplay. `clear_playback_window` disables sculpture-mode autoplay again. `set_volume` accepts `volume_percent` from 0 to 100.
 
 The `diagnostics` command returns compact service states and recent warnings for light field debugging over Bluetooth.
+
+`set_wifi_power` accepts an `enabled` boolean and changes Wi-Fi power in a
+background worker so BLE requests remain responsive. Poll `wifi_power_status`
+until it returns `success` or `error`. Turning Wi-Fi off disconnects SSH and
+other network access, but does not disable the Bluetooth control service.
 
 The shared BLE service UUID is configured in
 `siren-app/config/sculpture.yaml`; the sibling provisioning config uses the
@@ -154,7 +173,7 @@ Script naming in this repo separates first-time machine setup from normal app up
 
 - `scripts/initialize-pi.sh`: one-time Pi provisioning for packages, Witty Pi, audio, Bluetooth, and systemd.
 - `scripts/install.sh`: recurring app install/update after code has already been copied to the Pi.
-- `../sync-to-pi.sh`: laptop-side rsync helper that copies both application folders to the Pi and runs `scripts/install.sh` by default.
+- `../sync-to-pi.sh`: laptop-side rsync helper that copies both application folders to the Pi and optionally initializes or installs the Pi-side services.
 
 On an existing Pi checkout:
 
@@ -169,15 +188,16 @@ From the shared project root, run:
 ./sync-to-pi.sh
 ```
 
-The sync script reads defaults from `sync.env`, copies both monorepo application
-directories into `/opt/sculpture`, and runs
-`sudo /opt/sculpture/scripts/install.sh` on the Pi by default. Use overrides
-for less common flows:
+The sync script reads connection defaults from `sync.env`, prompts for the Pi
+hostname or IP address, and copies both monorepo application directories into
+`/opt/sculpture`. It then prompts whether to initialize a fresh Pi and whether
+to install and restart services. Both action prompts default to `no`; answer
+`no` to both for a copy-only sync.
+
+Audio syncing can still be overridden for a single run:
 
 ```bash
-RUN_INITIALIZE=1 ./sync-to-pi.sh  # Fresh Pi setup after syncing.
-RUN_INSTALL=0 ./sync-to-pi.sh     # Copy files only.
-SYNC_AUDIO=0 ./sync-to-pi.sh      # Skip large local audio files.
+SYNC_AUDIO=0 ./sync-to-pi.sh  # Skip large local audio files.
 ```
 
 ## Witty Pi Scheduling

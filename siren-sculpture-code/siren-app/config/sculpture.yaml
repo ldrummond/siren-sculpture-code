@@ -5,7 +5,7 @@ paths:
   app_dir: "/opt/sculpture"
 
 audio:
-  file: "/opt/sculpture/siren-app/assets/audio/siren-5.wav"
+  file: "/opt/sculpture/siren-app/assets/audio/siren-30.wav"
   loop: true
   volume_percent: 80
   player: "mpv"
@@ -33,6 +33,7 @@ ble:
     enabled: true
     adapter: "hci0"
     device_name: "device"
+    status_refresh_seconds: 5
     service_uuid: "9f0d0101-7b6d-4d2c-9f4f-6f70726f7601"
     command_characteristic_uuid: "9f0d0102-7b6d-4d2c-9f4f-6f70726f7601"
     status_characteristic_uuid: "9f0d0103-7b6d-4d2c-9f4f-6f70726f7601"

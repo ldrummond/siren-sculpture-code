@@ -30,14 +30,6 @@ cp sync.env.example sync.env
 ./pi-status.sh
 ```
 
-Initialize a fresh Raspberry Pi after syncing:
-
-```bash
-RUN_INITIALIZE=1 ./sync-to-pi.sh
-```
-
-Copy files without running the Pi-side installer:
-
-```bash
-RUN_INSTALL=0 ./sync-to-pi.sh
-```
+`sync-to-pi.sh` prompts for the Pi hostname or IP address, whether to initialize
+a fresh Pi, and whether to install and restart services after syncing. Both
+action prompts default to `no`, so answering `no` to both copies files only.

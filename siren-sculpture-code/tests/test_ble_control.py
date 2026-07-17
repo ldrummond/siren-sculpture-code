@@ -7,7 +7,23 @@ from datetime import datetime, timezone
 
 import pytest
 
-from siren_app.ble_control import MAX_BLE_JSON_BYTES, SirenBleControlService, _bluetooth_device_name, _command_epoch_seconds, _command_volume, _decode_response, _json_bytes, _last_response_summary, _load_bless_backend, _playback_window_payload, _truncate_utf8, _wifi_network_status, _wifi_power_state
+from siren_app.ble_control import (
+    MAX_BLE_JSON_BYTES,
+    SirenBleControlService,
+    _bluetooth_device_name,
+    _command_epoch_seconds,
+    _command_volume,
+    _command_wifi_enabled,
+    _decode_response,
+    _json_bytes,
+    _last_response_summary,
+    _load_bless_backend,
+    _playback_window_payload,
+    _set_wifi_power,
+    _truncate_utf8,
+    _wifi_network_status,
+    _wifi_power_state,
+)
 
 
 def install_fake_bless(monkeypatch: pytest.MonkeyPatch, permissions_module: str) -> tuple[type, type, type]:
@@ -82,6 +98,7 @@ def test_status_response_returns_error_json_when_status_fails(monkeypatch: pytes
 
     service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
     monkeypatch.setattr(service, "_status", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    service.refresh_status_cache()
 
     assert _decode_response(service.status_response()) == {"ok": False, "error": "status unavailable: boom"}
 
@@ -135,11 +152,31 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
             },
         },
     )
+    service.refresh_status_cache()
 
     response = service.status_response()
 
     assert len(response) <= MAX_BLE_JSON_BYTES
     assert "status" in _decode_response(response)
+
+
+def test_status_read_uses_cache_without_collecting_hardware_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeConfig:
+        def get(self, key: str, default: object = None) -> object:
+            values = {
+                "ble.control.service_uuid": "service",
+                "ble.control.command_characteristic_uuid": "command",
+                "ble.control.status_characteristic_uuid": "status",
+            }
+            return values.get(key, default)
+
+    service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
+    cached = _json_bytes({"status": {"audio": {"state": "playing"}}})
+    service._status_cache = cached
+    monkeypatch.setattr(service, "_status", lambda: (_ for _ in ()).throw(AssertionError("status read must not probe hardware")))
+
+    assert service.read_request("status") == cached
+    assert service._handle_command({"action": "status"}) == {"status": {"audio": {"state": "playing"}}}
 
 
 def test_last_response_summary_omits_nested_status() -> None:
@@ -229,6 +266,70 @@ def test_network_status_command_returns_compact_wifi_payload(monkeypatch: pytest
 
     assert response == {"ok": True, "wifi": wifi}
     assert len(_json_bytes(response)) <= MAX_BLE_JSON_BYTES
+
+
+def test_wifi_power_command_runs_asynchronous_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeConfig:
+        def get(self, key: str, default: object = None) -> object:
+            values = {
+                "ble.control.service_uuid": "service",
+                "ble.control.command_characteristic_uuid": "command",
+                "ble.control.status_characteristic_uuid": "status",
+            }
+            return values.get(key, default)
+
+    wifi = {"enabled": False, "connected": False, "ssid": None}
+    monkeypatch.setattr("siren_app.ble_control._set_wifi_power", lambda enabled: wifi)
+    service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
+
+    response = service._handle_command({"action": "set_wifi_power", "enabled": False})
+    assert response == {"ok": True, "wifi_power": {"state": "pending", "enabled": False}}
+
+    for _ in range(100):
+        response = service._handle_command({"action": "wifi_power_status"})
+        if response["wifi_power"]["state"] != "pending":
+            break
+        time.sleep(0.01)
+
+    assert response == {
+        "ok": True,
+        "wifi_power": {"state": "success", "enabled": False, "wifi": wifi},
+    }
+
+
+def test_wifi_power_command_requires_boolean() -> None:
+    with pytest.raises(ValueError, match="enabled must be true or false"):
+        _command_wifi_enabled({"enabled": "false"})
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected_commands", "wifi"),
+    [
+        (
+            True,
+            [["rfkill", "unblock", "wifi"], ["nmcli", "radio", "wifi", "on"]],
+            {"enabled": True, "connected": False, "ssid": None},
+        ),
+        (
+            False,
+            [["nmcli", "radio", "wifi", "off"], ["rfkill", "block", "wifi"]],
+            {"enabled": False, "connected": False, "ssid": None},
+        ),
+    ],
+)
+def test_set_wifi_power_uses_networkmanager_and_rfkill(
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    expected_commands: list[list[str]],
+    wifi: dict[str, object],
+) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setattr("siren_app.ble_control.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr("siren_app.ble_control._run_checked_command", lambda command: commands.append(command))
+    monkeypatch.setattr("siren_app.ble_control._wifi_network_status", lambda: wifi)
+
+    assert _set_wifi_power(enabled) == wifi
+    assert commands == expected_commands
 
 
 def test_command_epoch_seconds_accepts_browser_epoch_milliseconds() -> None:

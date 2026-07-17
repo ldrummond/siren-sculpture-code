@@ -6,6 +6,8 @@ APP_DIR="${APP_DIR:-/opt/sculpture}"
 PROVISIONING_DIR="${PROVISIONING_DIR:-${APP_DIR}/vendor/rpi-ble-wifi-provisioning}"
 ENABLE_BLE_CONTROL="${ENABLE_BLE_CONTROL:-1}"
 INSTALL_WITTYPI="${INSTALL_WITTYPI:-1}"
+PINNED_RPI_FIRMWARE_REVISION="${PINNED_RPI_FIRMWARE_REVISION:-7a0137617dd4a8496e566d23c01219923c409a79}"
+PINNED_RPI_KERNEL_VERSION="${PINNED_RPI_KERNEL_VERSION:-6.18.38-v7+}"
 DISABLE_UWI="${DISABLE_UWI:-1}"
 DISABLE_WIFI="${DISABLE_WIFI:-0}"
 DISABLE_HDMI="${DISABLE_HDMI:-1}"
@@ -29,6 +31,67 @@ ensure_script_permissions() {
     fi
   done
 }
+
+check_pinned_rpi_firmware() {
+  local current_kernel
+  local firmware_revision_file
+  local installed_revision=""
+
+  current_kernel="$(uname -r)"
+  if [[ -f /boot/firmware/.firmware_revision ]]; then
+    firmware_revision_file=/boot/firmware/.firmware_revision
+  else
+    firmware_revision_file=/boot/.firmware_revision
+  fi
+  if [[ -f "${firmware_revision_file}" ]]; then
+    installed_revision="$(tr -d '[:space:]' <"${firmware_revision_file}")"
+  fi
+
+  if [[ "${current_kernel}" == "${PINNED_RPI_KERNEL_VERSION}" && "${installed_revision}" == "${PINNED_RPI_FIRMWARE_REVISION}" ]]; then
+    echo "Pinned Raspberry Pi firmware verified: kernel=${current_kernel}, revision=${installed_revision}"
+    return 0
+  fi
+
+  cat >&2 <<EOF
+ERROR: Required Raspberry Pi firmware is not active. Initialization stopped
+before installing packages or changing system configuration.
+
+Installed revision: ${installed_revision:-not found}
+Required revision:  ${PINNED_RPI_FIRMWARE_REVISION}
+Running kernel:     ${current_kernel}
+Required kernel:    ${PINNED_RPI_KERNEL_VERSION}
+EOF
+
+  if [[ "${installed_revision}" == "${PINNED_RPI_FIRMWARE_REVISION}" ]]; then
+    cat >&2 <<EOF
+
+The correct firmware is installed, but the Pi has not booted its kernel yet:
+
+  sudo reboot
+
+After rebooting, confirm 'uname -r' reports ${PINNED_RPI_KERNEL_VERSION}, then
+run this initializer again.
+EOF
+  else
+    cat >&2 <<EOF
+
+Install the pinned firmware manually, then reboot:
+
+  sudo apt update
+  sudo apt install -y rpi-update
+  sudo env UPDATE_SELF=0 SKIP_WARNING=1 SKIP_BOOTLOADER=1 rpi-update ${PINNED_RPI_FIRMWARE_REVISION}
+  sudo reboot
+
+After rebooting, confirm 'uname -r' reports ${PINNED_RPI_KERNEL_VERSION}, then
+run this initializer again:
+
+  sudo ${APP_DIR}/scripts/initialize-pi.sh
+EOF
+  fi
+  exit 1
+}
+
+check_pinned_rpi_firmware
 
 echo
 echo "Initializing sculpture audio controller for user ${SCULPTURE_USER} in ${APP_DIR}"
