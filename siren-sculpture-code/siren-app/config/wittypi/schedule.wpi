@@ -1,9 +1,8 @@
-# Witty Pi schedule for daily sculpture operation.
-# Witty Pi state lines are durations, not clock times.
-# This starts each cycle at 07:30, stays on for 12 hours, then stays off
-# for 12 hours, repeating until END.
-
-# BEGIN 2026-01-01 07:30:00
-# END   2036-01-01 07:30:00
-# ON    H12
-# OFF   H12
+# Witty Pi scheduling is disabled by default.
+#
+# The sculpture remains on continuously while external power is available.
+# configure-wittypi.sh removes the installed schedule, clears stored startup
+# and shutdown alarms, and configures the Witty Pi hardware for Default ON.
+#
+# To intentionally restore scheduled power cycling, provide a valid active
+# schedule in this file and deploy with ENABLE_WITTYPI_POWER_SCHEDULE=1.

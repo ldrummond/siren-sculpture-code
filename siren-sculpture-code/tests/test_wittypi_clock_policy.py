@@ -29,3 +29,14 @@ def test_wittypi_configuration_applies_clock_policy_patch() -> None:
     script = (SCRIPTS_DIR / "configure-wittypi.sh").read_text(encoding="utf-8")
 
     assert '"${APP_DIR}/siren-app/scripts/patch-wittypi-clock-policy.sh"' in script
+
+
+def test_wittypi_defaults_to_always_on_external_power() -> None:
+    script = (SCRIPTS_DIR / "configure-wittypi.sh").read_text(encoding="utf-8")
+
+    assert 'ENABLE_WITTYPI_POWER_SCHEDULE="${ENABLE_WITTYPI_POWER_SCHEDULE:-0}"' in script
+    assert 'POWER_ON_WHEN_EXTERNAL_POWER="${POWER_ON_WHEN_EXTERNAL_POWER:-1}"' in script
+    assert 'rm -f "${TARGET}"' in script
+    assert "clear_startup_time" in script
+    assert "clear_shutdown_time" in script
+    assert '"${I2C_CONF_DEFAULT_ON}" 0x01' in script

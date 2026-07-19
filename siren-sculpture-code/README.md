@@ -200,16 +200,13 @@ Audio syncing can still be overridden for a single run:
 SYNC_AUDIO=0 ./sync-to-pi.sh  # Skip large local audio files.
 ```
 
-## Witty Pi Scheduling
+## Witty Pi Power Policy
 
-Witty Pi should own the hard power cycle:
-
-1. Wake the Pi in the morning.
-2. Pi boots and `systemd` starts the audio and BLE services.
-3. Audio starts automatically.
-4. Witty Pi initiates clean evening shutdown.
-5. Witty Pi cuts power.
-6. RTC keeps time through power interruptions.
+The default deployment keeps the sculpture on continuously whenever external
+power is available. It clears Witty Pi startup and shutdown alarms, removes the
+installed schedule script, and sets the Witty Pi hardware to `Default ON` so
+connecting external power boots the Pi. The RTC continues keeping time through
+power interruptions.
 
 The vendor installer automatically installs UUGear Web Interface (UWI), which starts a local web server. This project runs the standard Witty Pi installer through `siren-app/scripts/install-wittypi.sh`, then disables the `uwi` service so the web interface is available for manual maintenance but does not run in the field.
 
@@ -228,13 +225,15 @@ Clock safety is independent of Witty Pi power scheduling. Setting
 Set `ENABLE_WITTYPI_CLOCK_SYNC=0` only when intentionally disabling Witty Pi clock
 integration as well.
 
-The tracked schedule is:
+The tracked schedule placeholder is:
 
 ```text
 siren-app/config/wittypi/schedule.wpi
 ```
 
-The schedule starts at 07:30, stays on for 12 hours, then stays off for 12 hours. Reboot after applying Witty Pi changes so the daemon loads the schedule cleanly.
+To intentionally restore power scheduling, add an active Witty Pi schedule to
+that file and deploy with `ENABLE_WITTYPI_POWER_SCHEDULE=1`. Reboot after
+applying Witty Pi changes so the daemon loads the power policy cleanly.
 
 Bluetooth note: the standard Witty Pi installer applies `dtoverlay=miniuart-bt`. On Raspberry Pi models with onboard Bluetooth, that moves Bluetooth to the mini UART so GPIO14/TXD can behave the way Witty Pi expects for shutdown/power-cut signaling. The tradeoff is that Bluetooth can become more sensitive to UART/core clock behavior, so BLE control should be retested after the first Witty Pi install and reboot.
 
