@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  if ! command -v bash >/dev/null 2>&1; then
+    echo "sync-on-pi.sh requires Bash, but bash was not found." >&2
+    exit 1
+  fi
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
