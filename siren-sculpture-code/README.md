@@ -194,10 +194,13 @@ hostname or IP address, and copies both monorepo application directories into
 to install and restart services. Both action prompts default to `no`; answer
 `no` to both for a copy-only sync.
 
-Audio syncing can still be overridden for a single run:
+Audio files are tracked with Git LFS. Fresh initialization and regular
+installation both install Git LFS and initialize it for the sculpture user.
+In a Git checkout on the Pi, hydrate the tracked audio before deploying:
 
 ```bash
-SYNC_AUDIO=0 ./sync-to-pi.sh  # Skip large local audio files.
+git lfs pull
+./sync-on-pi.sh
 ```
 
 ## Witty Pi Power Policy

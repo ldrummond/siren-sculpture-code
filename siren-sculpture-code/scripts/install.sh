@@ -61,6 +61,11 @@ if [[ "${ENABLE_BLE_CONTROL}" == "1" ]] && ! command -v nmcli >/dev/null 2>&1; t
   ensure_apt_updated
   apt install -y network-manager
 fi
+if ! command -v git-lfs >/dev/null 2>&1; then
+  ensure_apt_updated
+  apt install -y git-lfs
+fi
+sudo -u "${SCULPTURE_USER}" git lfs install --skip-repo
 
 echo
 echo "-----------------------------------------------"

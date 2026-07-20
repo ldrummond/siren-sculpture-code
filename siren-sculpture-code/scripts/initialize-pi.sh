@@ -112,6 +112,7 @@ apt install -y \
   wget \
   ca-certificates \
   curl \
+  git-lfs \
   bluez \
   network-manager \
   rfkill
@@ -120,6 +121,7 @@ mkdir -p /var/lib/sculpture
 chown -R "${SCULPTURE_USER}:${SCULPTURE_USER}" /var/lib/sculpture
 chown -R "${SCULPTURE_USER}:${SCULPTURE_USER}" "${APP_DIR}"
 ensure_script_permissions
+sudo -u "${SCULPTURE_USER}" git lfs install --skip-repo
 
 if [[ "${ENABLE_BLE_CONTROL}" == "1" && ! -f "${PROVISIONING_DIR}/pyproject.toml" ]]; then
   echo "Missing BLE provisioning package: ${PROVISIONING_DIR}" >&2

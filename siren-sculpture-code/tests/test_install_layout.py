@@ -42,4 +42,14 @@ def test_initializer_requires_known_working_ble_kernel_without_installing_it() -
     assert "install_pinned_rpi_firmware" not in initializer
     package_block = initializer.split("apt install -y \\\n", 1)[1].split("\n\nmkdir -p", 1)[0]
     assert "rpi-update" not in package_block
+    assert "git-lfs" in package_block
+    assert 'git lfs install --skip-repo' in initializer
     assert "SKIP_BOOTLOADER=1" in initializer
+
+
+def test_regular_install_ensures_git_lfs_is_available() -> None:
+    installer = (SCULPTURE_ROOT / "scripts" / "install.sh").read_text()
+
+    assert "command -v git-lfs" in installer
+    assert "apt install -y git-lfs" in installer
+    assert 'git lfs install --skip-repo' in installer

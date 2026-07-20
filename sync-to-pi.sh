@@ -12,7 +12,6 @@ ENV_PI_HOST="${PI_HOST:-}"
 ENV_PI_USER="${PI_USER:-}"
 ENV_SSH_PORT="${SSH_PORT:-}"
 ENV_APP_DIR="${APP_DIR:-}"
-ENV_SYNC_AUDIO="${SYNC_AUDIO:-}"
 
 if [[ -f "${DEPLOY_CONFIG}" ]]; then
   # shellcheck disable=SC1090
@@ -26,7 +25,6 @@ PI_USER="${ENV_PI_USER:-${PI_USER:-}}"
 SSH_PORT="${ENV_SSH_PORT:-${SSH_PORT:-}}"
 APP_DIR="${ENV_APP_DIR:-${APP_DIR:-/opt/sculpture}}"
 REMOTE_PROVISIONING_DIR="${APP_DIR}/vendor/rpi-ble-wifi-provisioning"
-SYNC_AUDIO="${ENV_SYNC_AUDIO:-${SYNC_AUDIO:-1}}"
 
 prompt_yes_no() {
   local prompt="$1"
@@ -113,15 +111,6 @@ RSYNC_EXCLUDES=(
   "--exclude=desktop/"
   "--exclude=vendor/"
 )
-
-if [[ "${SYNC_AUDIO}" != "1" ]]; then
-  RSYNC_EXCLUDES+=(
-    "--exclude=siren-app/assets/audio/*.wav"
-    "--exclude=siren-app/assets/audio/*.mp3"
-    "--exclude=siren-app/assets/audio/*.flac"
-    "--exclude=siren-app/assets/audio/*.m4a"
-  )
-fi
 
 echo
 echo "-----------------------------------------------"

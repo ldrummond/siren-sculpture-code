@@ -43,6 +43,7 @@ deploy it with:
 
 ```bash
 git pull --ff-only
+git lfs pull
 ./sync-on-pi.sh
 ```
 
@@ -52,3 +53,7 @@ git pull --ff-only
 initializer and installer prompts as `sync-to-pi.sh`. Clone the repository
 outside `/opt/sculpture` so the Git checkout remains separate from the deployed
 runtime files.
+
+Audio files are tracked through Git LFS and are always included when the
+hydrated checkout is copied into `/opt/sculpture`. The Pi initializer and
+installer install Git LFS and initialize it for the sculpture user.
