@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -156,9 +158,19 @@ def _is_time_in_range(start_time: str, stop_time: str, timezone_name: str, now: 
 
 
 def time_datetime_now(timezone: Any) -> Any:
-    from datetime import datetime
-
     return datetime.now(timezone)
+
+
+def next_sculpture_sync_boundary(
+    now: float,
+    interval_seconds: int = 300,
+    lead_time_seconds: int = 120,
+) -> float:
+    if interval_seconds <= 0:
+        raise ValueError("Sculpture sync interval must be greater than zero")
+    if lead_time_seconds < 0:
+        raise ValueError("Sculpture sync lead time cannot be negative")
+    return math.ceil((now + lead_time_seconds) / interval_seconds) * interval_seconds
 
 
 class AudioPlayer:
@@ -330,6 +342,10 @@ def run_autoplay() -> int:
     manual_override = False
     manual_paused = False
     normal_paused = False
+    sync_restart_requested = True
+    sync_restart_at: float | None = None
+    sync_interval_seconds = int(config.get("audio.sculpture_sync_interval_seconds", 300) or 0)
+    sync_lead_time_seconds = int(config.get("audio.sculpture_sync_lead_time_seconds", 120) or 0)
     COMMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -351,41 +367,66 @@ def run_autoplay() -> int:
                 manual_override = True
                 manual_paused = True
                 normal_paused = False
+                sync_restart_requested = False
+                sync_restart_at = None
                 logger.info("Entering testing mode")
                 player.stop()
             elif command == "sculpture_mode":
                 manual_override = False
                 manual_paused = False
                 normal_paused = False
+                sync_restart_requested = True
+                sync_restart_at = None
                 logger.info("Entering sculpture mode")
             elif command == "test_play":
                 manual_override = True
                 manual_paused = False
                 normal_paused = False
+                sync_restart_requested = False
+                sync_restart_at = None
                 player.resume()
             elif command == "test_pause":
                 manual_override = True
                 manual_paused = True
                 normal_paused = False
+                sync_restart_requested = False
+                sync_restart_at = None
                 player.pause()
             elif command == "pause_sculpture":
                 manual_override = False
                 manual_paused = False
                 normal_paused = True
+                sync_restart_requested = False
+                sync_restart_at = None
                 player.stop()
             elif command == "test_restart":
                 manual_override = True
                 manual_paused = False
                 normal_paused = False
+                sync_restart_requested = False
+                sync_restart_at = None
                 player.restart()
             elif command == "play_sculpture":
                 manual_override = False
                 manual_paused = False
                 normal_paused = False
+                sync_restart_requested = True
+                sync_restart_at = None
                 logger.info("Resuming sculpture mode playback")
             elif command.startswith("volume:"):
                 try:
-                    player.set_volume(int(command.split(":", 1)[1]))
+                    volume = int(command.split(":", 1)[1])
+                    volume_changed_during_sculpture = (
+                        volume != player.volume_percent
+                        and player.is_running()
+                        and not manual_override
+                        and not manual_paused
+                        and not normal_paused
+                    )
+                    player.set_volume(volume)
+                    if volume_changed_during_sculpture:
+                        sync_restart_requested = True
+                        sync_restart_at = None
                 except ValueError:
                     logger.warning("Ignoring invalid volume command: %s", command)
             elif command.startswith("playback_window:"):
@@ -404,14 +445,45 @@ def run_autoplay() -> int:
         clock_trusted = is_clock_trusted(config)
         active = sculpture_window_active and clock_trusted
         player.check_process()
+        logger.info("Sculpture Window Active: %s", sculpture_window_active)
+        logger.info("Clock Trusted: %s", clock_trusted)
 
-        if not normal_paused and (active or manual_override) and not manual_paused:
+        should_play = not normal_paused and (active or manual_override) and not manual_paused
+        sculpture_playing = should_play and not manual_override
+
+        if sculpture_playing and sync_restart_at is not None and time.time() >= sync_restart_at:
+            boundary = datetime.fromtimestamp(sync_restart_at).astimezone().isoformat(timespec="seconds")
+            logger.info("Restarting sculpture playback at synchronization boundary %s", boundary)
+            sync_restart_at = None
+            if not player.restart():
+                sync_restart_requested = True
+
+        if should_play:
             if not player.is_running():
-                player.start()
+                sync_restart_at = None
+                if player.start() and not manual_override:
+                    sync_restart_requested = True
         else:
+            sync_restart_at = None
             if player.is_running():
                 logger.info("Playback is paused or outside active schedule; stopping playback")
                 player.stop()
+
+        if (
+            sculpture_playing
+            and player.is_running()
+            and sync_restart_requested
+            and sync_restart_at is None
+            and sync_interval_seconds > 0
+        ):
+            sync_restart_at = next_sculpture_sync_boundary(
+                time.time(),
+                sync_interval_seconds,
+                sync_lead_time_seconds,
+            )
+            sync_restart_requested = False
+            boundary = datetime.fromtimestamp(sync_restart_at).astimezone().isoformat(timespec="seconds")
+            logger.info("Sculpture playback will synchronize at %s", boundary)
 
         status = player.status().as_dict()
         status["manual_override"] = manual_override
@@ -421,8 +493,16 @@ def run_autoplay() -> int:
         status["supervisor_mode"] = "manual" if manual_override else "normal_paused" if normal_paused else "schedule"
         status["playback_window"] = playback_window
         status["clock_trusted"] = clock_trusted
+        status["sync_restart_at"] = (
+            datetime.fromtimestamp(sync_restart_at).astimezone().isoformat(timespec="seconds")
+            if sync_restart_at is not None
+            else None
+        )
         _write_status(status)
-        time.sleep(5)
+        sleep_seconds = 5.0
+        if sync_restart_at is not None:
+            sleep_seconds = max(0.05, min(sleep_seconds, sync_restart_at - time.time()))
+        time.sleep(sleep_seconds)
 
     _write_status(player.status().as_dict())
     logger.info("Sculpture audio supervisor stopped")

@@ -212,6 +212,16 @@ The vendor installer automatically installs UUGear Web Interface (UWI), which st
 
 The Python audio service also checks the configured active window, but that is a playback guard, not the primary power scheduler.
 
+When Sculpture Mode playback starts or resumes, audio begins immediately and
+then restarts once at a five-minute wall-clock boundary. A two-minute lead time
+gives an operator time to start the other sculptures: 17:08:01 through 17:13:00
+maps to 17:15, while a start just after 17:13 maps to 17:20. This gives
+sculptures with synchronized RTCs a common playback origin without requiring a
+network connection. Testing Mode is not synchronized. Configure the interval
+and lead time with `audio.sculpture_sync_interval_seconds` and
+`audio.sculpture_sync_lead_time_seconds` in `sculpture.yaml`; the defaults are
+300 and 120 seconds.
+
 The installer patches the vendor daemon's clock decision without replacing the
 standard Witty Pi installation. A valid RTC initializes system time at boot. An
 invalid RTC remains untouched until operating-system NTP reports confirmed

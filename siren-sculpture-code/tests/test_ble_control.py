@@ -14,6 +14,7 @@ from siren_app.ble_control import (
     _command_epoch_seconds,
     _command_volume,
     _command_wifi_enabled,
+    _compact_audio_status,
     _decode_response,
     _json_bytes,
     _last_response_summary,
@@ -134,9 +135,10 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
                 "file_exists": True,
                 "error": "x" * 24,
                 "manual_paused": False,
-                "control_mode": "sculpture",
-                "normal_paused": False,
-                "volume_percent": 80,
+                    "control_mode": "sculpture",
+                    "normal_paused": False,
+                    "volume_percent": 80,
+                    "sync_at": 1783703700,
                 "playback_window": {
                     "enabled": True,
                     "start_time": "08:00",
@@ -145,19 +147,26 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
                 },
             },
             "clock": {"system_time": "2026-07-10T11:11:01-06:00", "clock_trusted": True, "clock_ok": True},
-            "wittypi": {
-                "temperature_c": 24.5,
-                "temperature_f": 76.1,
-                "rtc_time": "2026-07-10T11:11:01-06:00",
+                "wittypi": {
+                    "temperature_c": 24.5,
+                    "rtc_time": "2026-07-10T11:11:01-06:00",
             },
         },
     )
     service.refresh_status_cache()
 
     response = service.status_response()
+    payload = _decode_response(response)
 
     assert len(response) <= MAX_BLE_JSON_BYTES
-    assert "status" in _decode_response(response)
+    assert "status" in payload
+    assert payload["status"]["audio"]["sync_at"] == 1783703700
+
+
+def test_compact_audio_status_converts_sync_time_to_epoch() -> None:
+    compact = _compact_audio_status({"sync_restart_at": "2026-07-10T11:15:00-06:00"})
+
+    assert compact["sync_at"] == 1783703700
 
 
 def test_status_read_uses_cache_without_collecting_hardware_status(monkeypatch: pytest.MonkeyPatch) -> None:

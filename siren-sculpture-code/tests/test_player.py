@@ -3,9 +3,21 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from siren_app.player import AudioPlayer, is_clock_trusted, playback_window_command, queue_command, read_playback_window, write_playback_window
+import pytest
+
+import siren_app.player as player_module
+from siren_app.player import (
+    AudioPlayer,
+    is_clock_trusted,
+    next_sculpture_sync_boundary,
+    playback_window_command,
+    queue_command,
+    read_playback_window,
+    write_playback_window,
+)
 
 
 class FakeConfig:
@@ -157,3 +169,151 @@ def test_clock_trust_does_not_require_marker_without_wittypi(tmp_path: Path, mon
     monkeypatch.setattr("siren_app.player.CLOCK_TRUST_FILE", tmp_path / "missing")
 
     assert is_clock_trusted(FakeConfig({"wittypi.enabled": False})) is True  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    (
+        ((17, 8, 1), (17, 15, 0)),
+        ((17, 13, 0), (17, 15, 0)),
+        ((17, 13, 1), (17, 20, 0)),
+        ((17, 18, 0), (17, 20, 0)),
+    ),
+)
+def test_next_sculpture_sync_boundary_keeps_two_minute_lead_time(
+    now: tuple[int, int, int],
+    expected: tuple[int, int, int],
+) -> None:
+    timezone = ZoneInfo("America/Denver")
+    current = datetime(2026, 7, 19, *now, tzinfo=timezone)
+
+    boundary = datetime.fromtimestamp(next_sculpture_sync_boundary(current.timestamp()), tz=timezone)
+
+    assert boundary == datetime(2026, 7, 19, *expected, tzinfo=timezone)
+
+
+def test_next_sculpture_sync_boundary_does_not_reuse_current_mark() -> None:
+    now = datetime(2026, 7, 19, 17, 5, tzinfo=ZoneInfo("America/Denver"))
+
+    boundary = datetime.fromtimestamp(
+        next_sculpture_sync_boundary(now.timestamp()),
+        tz=ZoneInfo("America/Denver"),
+    )
+
+    assert boundary == datetime(2026, 7, 19, 17, 10, tzinfo=ZoneInfo("America/Denver"))
+
+
+def test_next_sculpture_sync_boundary_rejects_disabled_interval() -> None:
+    try:
+        next_sculpture_sync_boundary(0, 0)
+    except ValueError as exc:
+        assert str(exc) == "Sculpture sync interval must be greater than zero"
+    else:
+        raise AssertionError("Expected a disabled sync interval to be rejected")
+
+
+def test_next_sculpture_sync_boundary_rejects_negative_lead_time() -> None:
+    with pytest.raises(ValueError, match="lead time cannot be negative"):
+        next_sculpture_sync_boundary(0, 300, -1)
+
+
+@pytest.mark.parametrize(
+    ("commands", "initial_time"),
+    (
+        ([], 2.4),
+        (["pause_sculpture", "play_sculpture"], -2.6),
+        (["testing_mode", "test_play", "sculpture_mode"], -7.6),
+    ),
+)
+def test_sculpture_playback_restarts_once_at_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    commands: list[str],
+    initial_time: float,
+) -> None:
+    class StopSupervisor(Exception):
+        pass
+
+    class FakePlayer:
+        instance: "FakePlayer"
+
+        def __init__(self, _config: object):
+            self.running = False
+            self.start_calls = 0
+            self.restart_calls = 0
+            self.volume_percent = 80
+            FakePlayer.instance = self
+
+        def start(self) -> bool:
+            self.running = True
+            self.start_calls += 1
+            return True
+
+        def stop(self) -> None:
+            self.running = False
+
+        def pause(self) -> None:
+            self.running = False
+
+        def resume(self) -> bool:
+            return self.start()
+
+        def restart(self) -> bool:
+            self.running = True
+            self.restart_calls += 1
+            return True
+
+        def set_volume(self, volume: int) -> bool:
+            self.volume_percent = volume
+            return True
+
+        def is_running(self) -> bool:
+            return self.running
+
+        def check_process(self) -> None:
+            return None
+
+        def status(self) -> object:
+            state = "playing" if self.running else "stopped"
+            return SimpleNamespace(as_dict=lambda: {"state": state})
+
+    queued_commands = iter(commands)
+    clock = [initial_time]
+
+    def read_command() -> str | None:
+        return next(queued_commands, None)
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+        if FakePlayer.instance.restart_calls:
+            raise StopSupervisor
+
+    config = FakeConfig(
+        {
+            "audio.sculpture_sync_interval_seconds": 5,
+            "audio.sculpture_sync_lead_time_seconds": 2,
+        }
+    )
+    monkeypatch.setattr(player_module, "load_config", lambda: config)
+    monkeypatch.setattr(player_module, "setup_logging", lambda _config: None)
+    monkeypatch.setattr(player_module, "AudioPlayer", FakePlayer)
+    monkeypatch.setattr(player_module, "_read_command", read_command)
+    monkeypatch.setattr(
+        player_module,
+        "read_playback_window",
+        lambda _config: {"enabled": True, "active": True},
+    )
+    monkeypatch.setattr(player_module, "is_clock_trusted", lambda _config: True)
+    monkeypatch.setattr(player_module, "_write_status", lambda _status: None)
+    monkeypatch.setattr(player_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(player_module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(player_module.time, "sleep", sleep)
+    monkeypatch.setattr(player_module, "COMMAND_FILE", tmp_path / "command")
+    monkeypatch.setattr(player_module, "STATUS_FILE", tmp_path / "status.json")
+
+    with pytest.raises(StopSupervisor):
+        player_module.run_autoplay()
+
+    assert FakePlayer.instance.start_calls == 1
+    assert FakePlayer.instance.restart_calls == 1
+    assert clock[0] == pytest.approx(10.0)

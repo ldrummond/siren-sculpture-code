@@ -270,13 +270,18 @@ def _truncate_utf8(value: str, max_bytes: int) -> str:
 def _compact_wittypi_status(wittypi: dict[str, Any]) -> dict[str, Any]:
     return {
         "temperature_c": wittypi.get("temperature_c"),
-        "temperature_f": wittypi.get("temperature_f"),
         "rtc_time": wittypi.get("rtc_time"),
     }
 
 
 def _compact_audio_status(audio: dict[str, Any]) -> dict[str, Any]:
     compact = {key: audio.get(key) for key in AUDIO_STATUS_KEYS if key in audio}
+    sync_restart_at = audio.get("sync_restart_at")
+    if isinstance(sync_restart_at, str):
+        try:
+            compact["sync_at"] = round(datetime.fromisoformat(sync_restart_at).timestamp())
+        except ValueError:
+            pass
     if compact.get("error"):
         compact["error"] = _truncate_text(str(compact["error"]), 24)
     playback_window = compact.get("playback_window")

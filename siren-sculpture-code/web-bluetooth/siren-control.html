@@ -245,6 +245,7 @@ let currentTestingPaused = true;
 let currentWifiEnabled = null;
 let pendingVolume = null;
 let volumeConfirmationTimer = null;
+let scheduledSyncAt = null;
 let operationQueue = Promise.resolve();
 
 function setBusy(isBusy, message = '') {
@@ -284,8 +285,11 @@ function updateButtonStates() {
 }
 
 function log(value) {
-  document.getElementById('output').textContent =
-    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  const output = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  const syncMessage = scheduledSyncAt === null
+    ? ''
+    : `Synchronization reset scheduled for ${new Date(scheduledSyncAt * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}.`;
+  document.getElementById('output').textContent = syncMessage ? `${syncMessage}\n\n${output}` : output;
 }
 
 function onDisconnected() {
@@ -684,6 +688,7 @@ function updateFromStatus(payload) {
   }
   const status = payload && payload.status ? payload.status : payload;
   const audio = status && status.audio ? status.audio : {};
+  scheduledSyncAt = typeof audio.sync_at === 'number' ? audio.sync_at : null;
   const mode = getMode(audio, lastAction);
   const publishedMode = getMode(audio, null);
 
