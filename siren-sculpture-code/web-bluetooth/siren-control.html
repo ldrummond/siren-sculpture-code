@@ -178,9 +178,9 @@
       <div class="row single-action">
         <button class="secondary" data-action="status" onclick="refreshStatus()">Status</button>
       </div>
-      <div class="row single-action">
+      <!-- <div class="row single-action">
         <button class="secondary" id="wifiPowerToggle" data-action="wifi_power_toggle" onclick="toggleWifiPower()">Wi-Fi Unavailable</button>
-      </div>
+      </div> -->
       <div class="row single-action">
         <button class="secondary" data-action="diagnostics" title="Read service states, Bluetooth and Wi-Fi power, kernel version, and recent warnings" onclick="sendCommand('diagnostics')">Diagnostics</button>
       </div>
@@ -200,6 +200,7 @@
     </div>
     <div class="row" id="sculptureControls">
       <button id="sculpturePlaybackToggle" data-action="sculpture_playback_toggle" onclick="toggleSculpturePlayback()">Play Sculpture</button>
+      <span class="status-chip on" id="syncResetChip" role="status" aria-live="polite" hidden></span>
     </div>
     <div class="row">
       <label class="inline-field">Play Audio within <input id="playbackStartTime" type="time"></label>
@@ -293,16 +294,30 @@ function updateButtonStates() {
 
 function log(value) {
   const output = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  const syncMessage = scheduledSyncAt === null
-    ? ''
-    : `Synchronization reset scheduled for ${new Date(scheduledSyncAt * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}.`;
-  document.getElementById('output').textContent = syncMessage ? `${syncMessage}\n\n${output}` : output;
+  document.getElementById('output').textContent = output;
+}
+
+function updateSynchronizationChip() {
+  const chip = document.getElementById('syncResetChip');
+  if (scheduledSyncAt === null) {
+    chip.hidden = true;
+    chip.textContent = '';
+    return;
+  }
+  const resetTime = new Date(scheduledSyncAt * 1000).toLocaleString([], {
+    dateStyle: 'short',
+    timeStyle: 'medium'
+  });
+  chip.textContent = `Will restart audio to synchronize sirens at: ${resetTime}`;
+  chip.hidden = false;
 }
 
 function onDisconnected() {
   commandCharacteristic = undefined;
   statusCharacteristic = undefined;
   cancelPendingVolume('Update interrupted');
+  scheduledSyncAt = null;
+  updateSynchronizationChip();
   updateNetworkStatus(null);
   setConnection('Disconnected');
 }
@@ -720,6 +735,7 @@ function updateFromStatus(payload) {
   const status = payload && payload.status ? payload.status : payload;
   const audio = status && status.audio ? status.audio : {};
   scheduledSyncAt = typeof audio.sync_at === 'number' ? audio.sync_at : null;
+  updateSynchronizationChip();
   const mode = getMode(audio, lastAction);
   const publishedMode = getMode(audio, null);
 
