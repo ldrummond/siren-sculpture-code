@@ -64,5 +64,6 @@ Run this package's tests from its directory:
 python -m pytest -q
 ```
 
-Host `web-bluetooth/provisioning.html` over HTTPS and use Chrome or Edge.
-The page is never served by the Raspberry Pi.
+The shared repository root is the GitHub Pages entry point for both Bluetooth
+controllers. Open `index.html` over HTTPS and select **Wi-Fi Setup**. The page
+is never served by the Raspberry Pi.

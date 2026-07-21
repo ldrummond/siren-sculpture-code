@@ -1,0 +1,37 @@
+{
+  "id": "./",
+  "name": "Siren Sculpture Controller",
+  "short_name": "Siren Control",
+  "description": "Bluetooth setup and control for Siren sculptures.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f7f2",
+  "theme_color": "#174135",
+  "icons": [
+    {
+      "src": "./icons/siren-controller-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/siren-controller-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Sculpture Control",
+      "short_name": "Control",
+      "url": "./siren-sculpture-code/web-bluetooth/siren-control.html"
+    },
+    {
+      "name": "Wi-Fi Setup",
+      "short_name": "Wi-Fi",
+      "url": "./rpi-ble-wifi-provisioning/web-bluetooth/provisioning.html"
+    }
+  ]
+}

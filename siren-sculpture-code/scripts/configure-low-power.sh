@@ -19,11 +19,25 @@ if [[ "${DISABLE_UWI}" == "1" ]]; then
 fi
 
 if [[ "${DISABLE_WIFI}" == "1" ]]; then
-  if command -v nmcli >/dev/null 2>&1; then
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager.service; then
     nmcli radio wifi off 2>/dev/null || true
   fi
   if command -v rfkill >/dev/null 2>&1; then
     rfkill block wifi 2>/dev/null || true
+  fi
+else
+  if command -v rfkill >/dev/null 2>&1; then
+    if ! rfkill unblock wifi; then
+      echo "WARNING: Could not remove the Wi-Fi rfkill block." >&2
+    fi
+  fi
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager.service; then
+    if ! nmcli networking on; then
+      echo "WARNING: Could not enable NetworkManager networking (the service may not be running yet)." >&2
+    fi
+    if ! nmcli radio wifi on; then
+      echo "WARNING: Could not enable the NetworkManager Wi-Fi radio (the service may not be running yet)." >&2
+    fi
   fi
 fi
 

@@ -11,6 +11,8 @@ def test_fresh_install_sources_are_present() -> None:
         SCULPTURE_ROOT / "scripts" / "initialize-pi.sh",
         SCULPTURE_ROOT / "scripts" / "install.sh",
         SCULPTURE_ROOT / "scripts" / "configure-bluetooth.sh",
+        SCULPTURE_ROOT / "scripts" / "configure-networkmanager.sh",
+        SCULPTURE_ROOT / "scripts" / "migrate_legacy_wifi.py",
         SCULPTURE_ROOT / "siren-app" / "siren_app" / "ble_gateway.py",
         PROVISIONING_ROOT / "pyproject.toml",
         PROVISIONING_ROOT / "provisioning" / "provisioning_core" / "ble_service.py",
@@ -53,3 +55,14 @@ def test_regular_install_ensures_git_lfs_is_available() -> None:
     assert "command -v git-lfs" in installer
     assert "apt install -y git-lfs" in installer
     assert 'git lfs install --skip-repo' in installer
+
+
+def test_installers_configure_networkmanager_with_wifi_policy() -> None:
+    for filename in ("initialize-pi.sh", "install.sh"):
+        installer = (SCULPTURE_ROOT / "scripts" / filename).read_text()
+        assert 'DISABLE_WIFI="${DISABLE_WIFI}" "${APP_DIR}/scripts/configure-networkmanager.sh"' in installer
+
+    low_power = (SCULPTURE_ROOT / "scripts" / "configure-low-power.sh").read_text()
+    assert "rfkill unblock wifi" in low_power
+    assert "nmcli networking on" in low_power
+    assert "nmcli radio wifi on" in low_power

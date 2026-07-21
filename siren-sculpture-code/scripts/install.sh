@@ -113,7 +113,7 @@ echo
 
 systemctl daemon-reload
 if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
-  systemctl enable --now NetworkManager.service
+  DISABLE_WIFI="${DISABLE_WIFI}" "${APP_DIR}/scripts/configure-networkmanager.sh"
   systemctl enable sculpture-ble-control.service
 else
   systemctl disable --now sculpture-ble-control.service 2>/dev/null || true
