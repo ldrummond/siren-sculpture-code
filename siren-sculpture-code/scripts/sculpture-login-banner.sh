@@ -18,8 +18,13 @@ _sculpture_login_banner() {
   _sculpture_fetch_timeout="${SCULPTURE_GIT_FETCH_TIMEOUT:-5}"
 
   echo
+  echo "-----------------------------------------------"
+  echo
   echo "Connected to '$(hostname)'"
+  echo "..."
   echo "Run 'sculpture-control' to view status and control sculpture playback."
+  echo
+  echo "-----------------------------------------------"
   echo
 
   if [ ! -e "${_sculpture_repo_link}" ]; then
@@ -55,13 +60,20 @@ _sculpture_login_banner() {
   _sculpture_ahead="$(printf '%s\n' "${_sculpture_counts}" | awk '{print $1}')"
   _sculpture_behind="$(printf '%s\n' "${_sculpture_counts}" | awk '{print $2}')"
   if [ "${_sculpture_behind:-0}" -gt 0 ] 2>/dev/null; then
-    echo "WARNING: siren-sculpture-code is NOT UP TO DATE (${_sculpture_behind} remote commit(s) available)."
+    echo
+    echo "------------------- WARNING -------------------"
+    echo
+    echo "WARNING:"
+    echo "Project git repository is NOT UP TO DATE (${_sculpture_behind} remote commit(s) available)."
     echo "Update the checkout with:"
     echo "  cd '${_sculpture_repo_dir}'"
     echo "  git pull --ff-only"
     echo "  git lfs pull"
     echo "Then deploy it with:"
     echo "  ./sync-on-pi.sh"
+    echo
+    echo "-----------------------------------------------"
+    echo
   elif [ "${_sculpture_ahead:-0}" -gt 0 ] 2>/dev/null; then
     echo "Repository status: local checkout is ${_sculpture_ahead} commit(s) ahead of ${_sculpture_upstream}."
     echo "Checkout: ${_sculpture_repo_dir}"
