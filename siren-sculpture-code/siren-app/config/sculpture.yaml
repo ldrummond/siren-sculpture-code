@@ -5,7 +5,7 @@ paths:
   app_dir: "/opt/sculpture"
 
 audio:
-  file: "/opt/sculpture/siren-app/assets/audio/siren-30.wav"
+  file: "/opt/sculpture/siren-app/assets/audio/volume_test4.wav"
   loop: true
   volume_percent: 80
   sculpture_sync_interval_seconds: 300

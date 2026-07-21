@@ -64,7 +64,7 @@ sudo reboot
 The default config expects:
 
 ```text
-/opt/sculpture/siren-app/assets/audio/siren-30.wav
+/opt/sculpture/siren-app/assets/audio/someaudio.wav
 ```
 
 Large audio files are ignored by Git. Copy them with `scp`, rsync, a USB drive, Git LFS, or a GitHub Release asset.
