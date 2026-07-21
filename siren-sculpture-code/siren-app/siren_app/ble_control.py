@@ -288,10 +288,15 @@ def _compact_audio_status(audio: dict[str, Any]) -> dict[str, Any]:
     compact = {key: audio.get(key) for key in AUDIO_STATUS_KEYS if key in audio}
     if audio.get("last_command_id"):
         compact["cmd"] = audio["last_command_id"]
-    sync_restart_at = audio.get("sync_restart_at")
-    if isinstance(sync_restart_at, str):
+    for source_key, compact_key in (
+        ("sync_restart_at", "sync_at"),
+        ("last_sync_restart_at", "synced_at"),
+    ):
+        sync_time = audio.get(source_key)
+        if not isinstance(sync_time, str):
+            continue
         try:
-            compact["sync_at"] = round(datetime.fromisoformat(sync_restart_at).timestamp())
+            compact[compact_key] = round(datetime.fromisoformat(sync_time).timestamp())
         except ValueError:
             pass
     if compact.get("error"):

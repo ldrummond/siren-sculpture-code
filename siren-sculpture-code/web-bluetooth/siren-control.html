@@ -91,6 +91,7 @@
     .status-chip.on { background: var(--primary-soft); color: var(--primary); }
     .status-chip.off { background: #e7e9e5; color: var(--muted); }
     .status-chip.warning { background: var(--manual-soft); color: var(--manual); }
+    .status-chip.scheduled { background: #e5edf7; color: #28577d; }
     .clock-alert {
       display: flex;
       align-items: center;
@@ -227,7 +228,7 @@
     </div>
     <div class="row" id="sculptureControls">
       <button id="sculpturePlaybackToggle" data-action="sculpture_playback_toggle" onclick="toggleSculpturePlayback()">Play Sculpture</button>
-      <span class="status-chip on" id="syncResetChip" role="status" aria-live="polite" hidden></span>
+      <span class="status-chip" id="syncResetChip" role="status" aria-live="polite" hidden></span>
     </div>
     <div class="row">
       <label class="inline-field">Play Audio within <input id="playbackStartTime" type="time"></label>
@@ -276,6 +277,8 @@ let currentWifiEnabled = null;
 let pendingVolume = null;
 let volumeConfirmationTimer = null;
 let scheduledSyncAt = null;
+let lastSynchronizedAt = null;
+let synchronizationChipTimer = null;
 let operationQueue = Promise.resolve();
 const COMMAND_CONFIRMATION_TIMEOUT_MS = 15000;
 
@@ -326,16 +329,36 @@ function log(value) {
 
 function updateSynchronizationChip() {
   const chip = document.getElementById('syncResetChip');
-  if (scheduledSyncAt === null) {
+  if (synchronizationChipTimer !== null) {
+    window.clearTimeout(synchronizationChipTimer);
+    synchronizationChipTimer = null;
+  }
+  const now = Date.now() / 1000;
+  const completedAt = scheduledSyncAt !== null && scheduledSyncAt <= now
+    ? scheduledSyncAt
+    : (scheduledSyncAt === null ? lastSynchronizedAt : null);
+  chip.classList.remove('on', 'scheduled');
+  if (scheduledSyncAt === null && completedAt === null) {
     chip.hidden = true;
     chip.textContent = '';
     return;
   }
-  const resetTime = new Date(scheduledSyncAt * 1000).toLocaleString([], {
+  const displayTimestamp = completedAt !== null ? completedAt : scheduledSyncAt;
+  const resetTime = new Date(displayTimestamp * 1000).toLocaleString([], {
     dateStyle: 'short',
     timeStyle: 'medium'
   });
-  chip.textContent = `Will restart audio to synchronize sirens at: ${resetTime}`;
+  if (completedAt !== null) {
+    chip.textContent = `Synchronized at ${resetTime}`;
+    chip.classList.add('on');
+  } else {
+    chip.textContent = `Will restart audio to synchronize sirens at: ${resetTime}`;
+    chip.classList.add('scheduled');
+    synchronizationChipTimer = window.setTimeout(
+      updateSynchronizationChip,
+      Math.max(0, (scheduledSyncAt - now) * 1000) + 100
+    );
+  }
   chip.hidden = false;
 }
 
@@ -344,6 +367,7 @@ function onDisconnected() {
   statusCharacteristic = undefined;
   cancelPendingVolume('Update interrupted');
   scheduledSyncAt = null;
+  lastSynchronizedAt = null;
   updateSynchronizationChip();
   updateNetworkStatus(null);
   updateClockStatus(null);
@@ -763,6 +787,7 @@ function updateFromStatus(payload) {
   const status = payload && payload.status ? payload.status : payload;
   const audio = status && status.audio ? status.audio : {};
   scheduledSyncAt = typeof audio.sync_at === 'number' ? audio.sync_at : null;
+  lastSynchronizedAt = typeof audio.synced_at === 'number' ? audio.synced_at : null;
   updateSynchronizationChip();
   const mode = getMode(audio, lastAction);
   const publishedMode = getMode(audio, null);

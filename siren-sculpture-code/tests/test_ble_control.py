@@ -168,11 +168,13 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
 def test_compact_audio_status_converts_sync_time_to_epoch() -> None:
     compact = _compact_audio_status({
         "sync_restart_at": "2026-07-10T11:15:00-06:00",
+        "last_sync_restart_at": "2026-07-10T11:10:00-06:00",
         "last_command_id": "command-1",
         "last_command": "test_play",
     })
 
     assert compact["sync_at"] == 1783703700
+    assert compact["synced_at"] == 1783703400
     assert compact["cmd"] == "command-1"
     assert "last_command" not in compact
 

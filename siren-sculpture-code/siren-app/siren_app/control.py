@@ -108,6 +108,7 @@ def format_status(status: dict[str, Any] | None, service_state: str) -> str:
             f"Volume:             {volume}%" if isinstance(volume, int) else "Volume:             unknown",
             f"Audio file:         {status.get('file', 'unknown')}",
             f"Next sync restart:  {_display_time(status.get('sync_restart_at'))}",
+            f"Last synchronized:  {_display_time(status.get('last_sync_restart_at'))}",
             f"Status updated:     {_display_timestamp(status.get('updated_at'))}",
         )
     )

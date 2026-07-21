@@ -430,6 +430,7 @@ def test_sculpture_playback_restarts_once_at_boundary(
 
     queued_commands = iter(commands)
     clock = [initial_time]
+    statuses: list[dict[str, object]] = []
 
     def read_command() -> str | None:
         return next(queued_commands, None)
@@ -455,7 +456,7 @@ def test_sculpture_playback_restarts_once_at_boundary(
         lambda _config: {"enabled": True, "active": True},
     )
     monkeypatch.setattr(player_module, "is_clock_trusted", lambda _config: True)
-    monkeypatch.setattr(player_module, "_write_status", lambda _status: None)
+    monkeypatch.setattr(player_module, "_write_status", lambda status: statuses.append(dict(status)))
     monkeypatch.setattr(player_module.signal, "signal", lambda *_args: None)
     monkeypatch.setattr(player_module.time, "time", lambda: clock[0])
     monkeypatch.setattr(player_module.time, "sleep", sleep)
@@ -468,3 +469,5 @@ def test_sculpture_playback_restarts_once_at_boundary(
     assert FakePlayer.instance.start_calls == 1
     assert FakePlayer.instance.restart_calls == 1
     assert clock[0] == pytest.approx(10.0)
+    assert statuses[-1]["sync_restart_at"] is None
+    assert datetime.fromisoformat(str(statuses[-1]["last_sync_restart_at"])).timestamp() == 5

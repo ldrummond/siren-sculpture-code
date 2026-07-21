@@ -351,6 +351,7 @@ def run_autoplay() -> int:
     normal_paused = False
     sync_restart_requested = True
     sync_restart_at: float | None = None
+    last_sync_restart_at: float | None = None
     last_command_id: str | None = None
     last_command: str | None = None
     sync_interval_seconds = int(config.get("audio.sculpture_sync_interval_seconds", 300) or 0)
@@ -468,10 +469,13 @@ def run_autoplay() -> int:
         sculpture_playing = should_play and not manual_override
 
         if sculpture_playing and sync_restart_at is not None and time.time() >= sync_restart_at:
-            boundary = datetime.fromtimestamp(sync_restart_at).astimezone().isoformat(timespec="seconds")
+            completed_sync_at = sync_restart_at
+            boundary = datetime.fromtimestamp(completed_sync_at).astimezone().isoformat(timespec="seconds")
             logger.info("Restarting sculpture playback at synchronization boundary %s", boundary)
             sync_restart_at = None
-            if not player.restart():
+            if player.restart():
+                last_sync_restart_at = completed_sync_at
+            else:
                 sync_restart_requested = True
 
         if should_play:
@@ -513,6 +517,11 @@ def run_autoplay() -> int:
         status["sync_restart_at"] = (
             datetime.fromtimestamp(sync_restart_at).astimezone().isoformat(timespec="seconds")
             if sync_restart_at is not None
+            else None
+        )
+        status["last_sync_restart_at"] = (
+            datetime.fromtimestamp(last_sync_restart_at).astimezone().isoformat(timespec="seconds")
+            if last_sync_restart_at is not None
             else None
         )
         if isinstance(queued_command, QueuedAudioCommand) and queued_command.command_id:

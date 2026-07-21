@@ -20,6 +20,10 @@ def test_pending_synchronization_is_shown_beside_sculpture_control() -> None:
     assert "scheduledSyncAt = typeof audio.sync_at === 'number' ? audio.sync_at : null;" in html
     assert 'id="syncResetChip"' in sculpture_controls
     assert "Will restart audio to synchronize sirens at:" in html
+    assert "lastSynchronizedAt = typeof audio.synced_at === 'number' ? audio.synced_at : null;" in html
+    assert "Synchronized at ${resetTime}" in html
+    assert "chip.classList.add('scheduled');" in html
+    assert "chip.classList.add('on');" in html
     assert "updateSynchronizationChip();" in html
     assert "Synchronization reset scheduled for" not in html
 
