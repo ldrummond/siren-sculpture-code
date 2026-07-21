@@ -288,14 +288,14 @@ if [[ "${RUN_INITIALIZE}" == "1" ]]; then
   echo "Running Pi-side fresh image initialization script"
   echo "-----------------------------------------------"
   echo
-  "${SUDO[@]}" "${APP_DIR}/scripts/initialize-pi.sh"
+  "${SUDO[@]}" env SCULPTURE_REPO_DIR="${PROJECT_ROOT}" "${APP_DIR}/scripts/initialize-pi.sh"
 elif [[ "${RUN_INSTALL}" == "1" ]]; then
   echo
   echo "-----------------------------------------------"
   echo "Running Pi-side app install script"
   echo "-----------------------------------------------"
   echo
-  "${SUDO[@]}" "${APP_DIR}/scripts/install.sh"
+  "${SUDO[@]}" env SCULPTURE_REPO_DIR="${PROJECT_ROOT}" "${APP_DIR}/scripts/install.sh"
 else
   echo
   echo "-----------------------------------------------"

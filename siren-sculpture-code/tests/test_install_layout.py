@@ -13,13 +13,31 @@ def test_fresh_install_sources_are_present() -> None:
         SCULPTURE_ROOT / "scripts" / "configure-bluetooth.sh",
         SCULPTURE_ROOT / "scripts" / "configure-networkmanager.sh",
         SCULPTURE_ROOT / "scripts" / "migrate_legacy_wifi.py",
+        SCULPTURE_ROOT / "scripts" / "sculpture-login-banner.sh",
         SCULPTURE_ROOT / "siren-app" / "siren_app" / "ble_gateway.py",
+        SCULPTURE_ROOT / "siren-app" / "siren_app" / "control.py",
+        SCULPTURE_ROOT / "siren-app" / "scripts" / "sculpture-control.sh",
         PROVISIONING_ROOT / "pyproject.toml",
         PROVISIONING_ROOT / "provisioning" / "provisioning_core" / "ble_service.py",
         PROVISIONING_ROOT / "provisioning" / "settings" / "provisioning.yaml",
     )
 
     assert all(path.is_file() for path in required)
+
+
+def test_installers_install_sculpture_control_command() -> None:
+    expected = 'install -m 0755 "${APP_DIR}/siren-app/scripts/sculpture-control.sh" /usr/local/bin/sculpture-control'
+
+    for filename in ("initialize-pi.sh", "install.sh"):
+        installer = (SCULPTURE_ROOT / "scripts" / filename).read_text()
+        assert expected in installer
+
+
+def test_installers_install_ssh_login_banner() -> None:
+    for filename in ("initialize-pi.sh", "install.sh"):
+        installer = (SCULPTURE_ROOT / "scripts" / filename).read_text()
+        assert 'install -m 0644 "${APP_DIR}/scripts/sculpture-login-banner.sh" /etc/profile.d/sculpture-login.sh' in installer
+        assert 'ln -sfn "${SCULPTURE_REPO_DIR}" /etc/sculpture-repo' in installer
 
 
 def test_standalone_provisioning_lifecycle_is_absent() -> None:

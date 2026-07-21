@@ -110,6 +110,25 @@ reboot
 
 Sculpture mode is the normal field mode: playback follows the runtime playback window, and `play_sculpture` / `pause_sculpture` control that normal playback. Testing mode is the manual field-test mode: `test_play`, `test_pause`, and `test_restart` let you exercise audio playback without returning immediately to normal autoplay.
 
+For an interactive status and control menu over SSH, run:
+
+```bash
+sculpture-control
+```
+
+The same tool supports quick commands such as `sculpture-control status`,
+`sculpture-control pause`, `sculpture-control play`, and
+`sculpture-control test-restart`. It is installed into `/usr/local/bin` by both
+the fresh initializer and regular install script.
+
+Interactive SSH logins also display the Pi hostname, a reminder about
+`sculpture-control`, and the Git checkout's update status. `sync-on-pi.sh`
+records the checkout location during deployment. The check fetches the current
+branch's upstream with a five-second timeout; when the Pi is offline it reports
+the remote status as unknown without blocking the login indefinitely. When the
+checkout is behind, the banner recommends `git pull --ff-only`, `git lfs pull`,
+and another `./sync-on-pi.sh` deployment.
+
 `set_playback_window` accepts `start_time` and `stop_time` in `HH:MM` format, for example `08:00` to `21:00`. The window is stored in `/var/lib/sculpture/playback-window.json`. If no playback window is set, sculpture mode does not autoplay. `clear_playback_window` disables sculpture-mode autoplay again. `set_volume` accepts `volume_percent` from 0 to 100.
 
 The `diagnostics` command returns compact service states and recent warnings for light field debugging over Bluetooth.

@@ -38,7 +38,7 @@ def main() -> int:
     status = gather_status(config)
     if not status["clock"]["clock_ok"]:
         if not status["clock"]["clock_trusted"]:
-            warnings.append("Clock is not trusted; scheduled sculpture playback is disabled")
+            warnings.append("Clock is not trusted; clock fallback autoplay is active")
         else:
             warnings.append(f"Clock drift warning: {status['clock']['drift_seconds']} seconds")
     if config.get("wittypi.enabled", False) and not status["wittypi"]["detected"]:

@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCULPTURE_USER="${SCULPTURE_USER:-admin}"
 APP_DIR="${APP_DIR:-/opt/sculpture}"
+SCULPTURE_REPO_DIR="${SCULPTURE_REPO_DIR:-}"
 PROVISIONING_DIR="${PROVISIONING_DIR:-${APP_DIR}/vendor/rpi-ble-wifi-provisioning}"
 WITTYPI_DIR="${WITTYPI_DIR:-/home/${SCULPTURE_USER}/wittypi}"
 APPLY_WITTYPI_SCHEDULE="${APPLY_WITTYPI_SCHEDULE:-1}"
@@ -83,6 +84,13 @@ fi
 sudo -u "${SCULPTURE_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
 if [[ "${ENABLE_BLE_CONTROL}" == "1" ]]; then
   sudo -u "${SCULPTURE_USER}" "${APP_DIR}/.venv/bin/pip" install -e "${PROVISIONING_DIR}"
+fi
+install -m 0755 "${APP_DIR}/siren-app/scripts/sculpture-control.sh" /usr/local/bin/sculpture-control
+install -m 0644 "${APP_DIR}/scripts/sculpture-login-banner.sh" /etc/profile.d/sculpture-login.sh
+if [[ -n "${SCULPTURE_REPO_DIR}" ]] && git -C "${SCULPTURE_REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  ln -sfn "${SCULPTURE_REPO_DIR}" /etc/sculpture-repo
+elif [[ ! -e /etc/sculpture-repo && ! -L /etc/sculpture-repo ]]; then
+  echo "Git checkout path was not supplied; the SSH banner will report repository status as unknown."
 fi
 
 cp "${APP_DIR}"/siren-app/systemd/*.service /etc/systemd/system/

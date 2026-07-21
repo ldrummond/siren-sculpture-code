@@ -25,3 +25,9 @@ def test_sync_bootstraps_git_lfs_when_missing() -> None:
     assert 'apt-get install -y git-lfs' in script
     assert 'lfs install --local' in script
     assert 'lfs ls-files --name-only' in script
+
+
+def test_sync_records_checkout_for_ssh_login_banner() -> None:
+    script = SYNC_SCRIPT.read_text()
+
+    assert script.count('env SCULPTURE_REPO_DIR="${PROJECT_ROOT}"') == 2
