@@ -301,6 +301,73 @@ def test_autoplay_publishes_acknowledgement_before_completing_command(
     assert completed == [queued]
 
 
+def test_untrusted_clock_falls_back_to_autoplay_without_scheduled_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StopSupervisor(Exception):
+        pass
+
+    class FakePlayer:
+        def __init__(self, _config: object):
+            self.running = False
+            self.volume_percent = 80
+
+        def start(self) -> bool:
+            self.running = True
+            return True
+
+        def stop(self) -> None:
+            self.running = False
+
+        def restart(self) -> bool:
+            raise AssertionError("an untrusted clock must not schedule a synchronization restart")
+
+        def set_volume(self, volume: int) -> bool:
+            self.volume_percent = volume
+            return True
+
+        def is_running(self) -> bool:
+            return self.running
+
+        def check_process(self) -> None:
+            return None
+
+        def status(self) -> object:
+            state = "playing" if self.running else "stopped"
+            return SimpleNamespace(as_dict=lambda: {"state": state})
+
+    statuses: list[dict[str, object]] = []
+    config = FakeConfig(
+        {
+            "audio.sculpture_sync_interval_seconds": 300,
+            "audio.sculpture_sync_lead_time_seconds": 120,
+        }
+    )
+    monkeypatch.setattr(player_module, "load_config", lambda: config)
+    monkeypatch.setattr(player_module, "setup_logging", lambda _config: None)
+    monkeypatch.setattr(player_module, "AudioPlayer", FakePlayer)
+    monkeypatch.setattr(player_module, "_read_command", lambda: None)
+    monkeypatch.setattr(
+        player_module,
+        "read_playback_window",
+        lambda _config: {"enabled": True, "active": False},
+    )
+    monkeypatch.setattr(player_module, "is_clock_trusted", lambda _config: False)
+    monkeypatch.setattr(player_module, "_write_status", lambda status: statuses.append(dict(status)))
+    monkeypatch.setattr(player_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(player_module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopSupervisor))
+    monkeypatch.setattr(player_module, "COMMAND_FILE", tmp_path / "command")
+    monkeypatch.setattr(player_module, "STATUS_FILE", tmp_path / "status.json")
+
+    with pytest.raises(StopSupervisor):
+        player_module.run_autoplay()
+
+    assert statuses[-1]["state"] == "playing"
+    assert statuses[-1]["clock_trusted"] is False
+    assert statuses[-1]["sync_restart_at"] is None
+
+
 @pytest.mark.parametrize(
     ("commands", "initial_time"),
     (

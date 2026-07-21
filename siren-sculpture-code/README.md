@@ -234,9 +234,11 @@ The installer patches the vendor daemon's clock decision without replacing the
 standard Witty Pi installation. A valid RTC initializes system time at boot. An
 invalid RTC remains untouched until operating-system NTP reports confirmed
 synchronization; only then does `sculpture-wittypi-clock-sync.timer` write the
-corrected system time to the RTC. Scheduled Sculpture Mode playback is disabled
-while `/run/sculpture-clock-trusted` is absent, but manual Testing Mode remains
-available.
+corrected system time to the RTC. While `/run/sculpture-clock-trusted` is absent,
+Sculpture Mode falls back to autoplay so the sculpture does not remain silent.
+Clock-based playback windows and five-minute synchronization restarts resume
+after the clock is trusted. The blue controller warns when fallback autoplay is
+active and can send the controlling device's time to resynchronize both clocks.
 
 Clock safety is independent of Witty Pi power scheduling. Setting
 `APPLY_WITTYPI_SCHEDULE=0` leaves the RTC patch and synchronization timer enabled.

@@ -453,7 +453,13 @@ def run_autoplay() -> int:
         playback_window = read_playback_window(config)
         sculpture_window_active = bool(playback_window.get("enabled")) and bool(playback_window.get("active"))
         clock_trusted = is_clock_trusted(config)
-        active = sculpture_window_active and clock_trusted
+        # An untrusted clock cannot safely decide whether a clock-based playback
+        # window is active. Fall back to autoplay so a sculpture is not silent,
+        # and resume window-based control as soon as the clock is trusted again.
+        active = sculpture_window_active if clock_trusted else True
+        if not clock_trusted:
+            sync_restart_at = None
+            sync_restart_requested = True
         player.check_process()
         logger.info("Sculpture Window Active: %s", sculpture_window_active)
         logger.info("Clock Trusted: %s", clock_trusted)
@@ -481,6 +487,7 @@ def run_autoplay() -> int:
 
         if (
             sculpture_playing
+            and clock_trusted
             and player.is_running()
             and sync_restart_requested
             and sync_restart_at is None

@@ -91,6 +91,20 @@
     .status-chip.on { background: var(--primary-soft); color: var(--primary); }
     .status-chip.off { background: #e7e9e5; color: var(--muted); }
     .status-chip.warning { background: var(--manual-soft); color: var(--manual); }
+    .clock-alert {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--manual);
+      border-radius: 6px;
+      background: var(--manual-soft);
+      color: var(--manual);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .clock-alert strong { display: block; margin-bottom: 3px; }
+    .clock-alert button { flex: 0 0 auto; background: var(--manual); }
     .activity { min-height: 28px; color: var(--muted); }
     .busy .activity { color: var(--primary); font-weight: 650; }
     .spinner {
@@ -120,12 +134,21 @@
       main { padding: 16px; }
       .status-grid { grid-template-columns: 1fr; }
       button { flex: 1 1 calc(50% - 8px); }
+      .clock-alert { align-items: stretch; flex-direction: column; }
     }
   </style>
 </head>
 <body>
 <main>
   <h1>Sculpture BLE Control</h1>
+
+  <aside class="clock-alert" id="clockAlert" role="alert" aria-live="assertive" hidden>
+    <div>
+      <strong>Clock out of sync</strong>
+      Sculpture Mode is autoplaying. To use clock-based playback, send this device's time to resync the Pi and Witty Pi RTC.
+    </div>
+    <button data-action="set_device_time" onclick="setDeviceTimeFromBrowser()">Send Time to Resync</button>
+  </aside>
 
   <section class="status-grid" aria-live="polite">
     <div class="status-card">
@@ -143,6 +166,10 @@
     <div class="status-card">
       <span class="label">Device Time</span>
       <span class="value" id="deviceTimeStatus">Unknown</span>
+    </div>
+    <div class="status-card">
+      <span class="label">Clock</span>
+      <span class="status-chip" id="clockStatus">Unknown</span>
     </div>
     <div class="status-card">
       <span class="label">Temperature</span>
@@ -319,6 +346,7 @@ function onDisconnected() {
   scheduledSyncAt = null;
   updateSynchronizationChip();
   updateNetworkStatus(null);
+  updateClockStatus(null);
   setConnection('Disconnected');
 }
 
@@ -751,6 +779,7 @@ function updateDeviceStatus(status, audio) {
   const clock = status && status.clock ? status.clock : {};
   const wittypi = status && status.wittypi ? status.wittypi : {};
   document.getElementById('deviceTimeStatus').textContent = formatTime(clock.system_time || wittypi.rtc_time);
+  updateClockStatus(clock);
   document.getElementById('temperatureStatus').textContent = formatTemperature(wittypi);
   if (typeof audio.volume_percent === 'number' && (pendingVolume === null || audio.volume_percent === pendingVolume)) {
     if (audio.volume_percent === pendingVolume) {
@@ -775,6 +804,25 @@ function updateDeviceStatus(status, audio) {
     updateButtonStates();
   }
   updatePlaybackWindowControls(audio.playback_window);
+}
+
+function updateClockStatus(clock) {
+  const chip = document.getElementById('clockStatus');
+  const alert = document.getElementById('clockAlert');
+  const trusted = clock && typeof clock.clock_trusted === 'boolean' ? clock.clock_trusted : null;
+  chip.classList.remove('on', 'off', 'warning');
+  if (trusted === false) {
+    chip.textContent = 'Out of sync - send time';
+    chip.classList.add('warning');
+    alert.hidden = false;
+  } else if (trusted === true) {
+    chip.textContent = clock.clock_ok === false ? 'RTC drift warning' : 'Trusted';
+    chip.classList.add(clock.clock_ok === false ? 'warning' : 'on');
+    alert.hidden = true;
+  } else {
+    chip.textContent = 'Unknown';
+    alert.hidden = true;
+  }
 }
 
 function updateSculpturePlaybackButton() {
@@ -846,10 +894,12 @@ function getActionMode(action) {
 function formatPlayback(audio, status) {
   if (audio.error) return audio.error;
   if (audio.file_exists === false) return 'Audio file missing';
-  if (status && status.clock && status.clock.clock_trusted === false && audio.control_mode !== 'testing') return 'Clock not trusted';
   if (audio.control_mode === 'sculpture' || audio.normal_paused) {
-    if (!audio.playback_window || !audio.playback_window.enabled) return 'No playback range set';
     if (audio.normal_paused) return 'Sculpture paused';
+    if (status && status.clock && status.clock.clock_trusted === false) {
+      return audio.state === 'playing' ? 'Sculpture playing (clock fallback)' : 'Starting clock fallback autoplay';
+    }
+    if (!audio.playback_window || !audio.playback_window.enabled) return 'No playback range set';
     if (audio.playback_window.active === false) return 'Outside playback range';
     if (audio.state === 'playing') return 'Sculpture playing';
   }
