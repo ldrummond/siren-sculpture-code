@@ -16,20 +16,17 @@ files.
   the Pi, without SSH.
 - `pi-status.sh`: prints relevant service statuses from the Pi.
 - `sync.env.example`: template for local SSH and deployment defaults.
-- `index.html`, `manifest.webmanifest`, and `service-worker.js`: the unified
-  installable Web Bluetooth controller site for GitHub Pages.
+- `index.html`, `site.js`, and `site.css`: the unified Web Bluetooth controller
+  site for GitHub Pages.
 
 ## Web Bluetooth controller site
 
 Publish the repository root with GitHub Pages. The root `index.html` is the
 single entry point for sculpture control and Wi-Fi provisioning, and both
-controller pages share one PWA manifest, service worker, installation scope,
-and navigation bar.
-
-On iPhone and iPad, the site requires users to add it from the browser's Share
-menu with **Add to Home Screen** before the controllers are shown. Installation
-does not add Web Bluetooth support to Safari/WebKit; the site reports that
-limitation when `navigator.bluetooth` is unavailable.
+controller pages share one navigation and browser-compatibility layer. If Web
+Bluetooth is unavailable on iPhone or iPad, the site directs the user to Bluefy
+and provides a button to copy the current page address. Unsupported Android
+browsers provide a button that reopens the same address in Chrome.
 
 Create the local deployment configuration once:
 

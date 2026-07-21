@@ -1,4 +1,4 @@
-.pwa-site-nav {
+.site-nav {
   position: relative;
   z-index: 10;
   display: flex;
@@ -9,7 +9,7 @@
   background: #fff;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-.pwa-site-nav a {
+.site-nav a {
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -20,8 +20,8 @@
   font-weight: 700;
   text-decoration: none;
 }
-.pwa-site-nav a[aria-current="page"] { background: #dce9e3; }
-.pwa-browser-warning {
+.site-nav a[aria-current="page"] { background: #dce9e3; }
+.browser-warning {
   margin: 0;
   padding: 11px 16px;
   background: #f5e3d4;
@@ -29,7 +29,7 @@
   text-align: center;
   font: 650 0.9rem/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-.pwa-install-gate {
+.browser-gate {
   position: fixed;
   z-index: 10000;
   inset: 0;
@@ -40,31 +40,36 @@
   color: #1c2420;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-.pwa-install-card {
-  width: min(430px, 100%);
+.browser-gate-card {
+  width: min(440px, 100%);
   border: 1px solid #d6d8ce;
   border-radius: 14px;
   padding: 24px;
   background: #fff;
   box-shadow: 0 16px 50px rgb(23 65 53 / 14%);
 }
-.pwa-install-card h1 { margin: 0 0 12px; font-size: 1.45rem; line-height: 1.25; }
-.pwa-install-card p { margin: 0 0 18px; color: #5d6861; line-height: 1.5; }
-.pwa-install-card button {
+.browser-gate-card h1 { margin: 0 0 12px; font-size: 1.45rem; line-height: 1.25; }
+.browser-gate-card p { margin: 0 0 18px; color: #5d6861; line-height: 1.5; }
+.browser-actions { display: grid; gap: 10px; }
+.browser-action {
+  display: inline-flex;
   width: 100%;
   min-height: 48px;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 7px;
   padding: 0 16px;
   background: #174135;
   color: #fff;
+  cursor: pointer;
   font: 700 1rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-decoration: none;
 }
-.pwa-install-steps { margin-top: 18px; }
-.pwa-install-steps strong { color: #1c2420; }
-.pwa-install-steps[hidden] { display: none; }
-body.pwa-install-required { overflow: hidden; }
+.browser-action.secondary { border: 1px solid #174135; background: #fff; color: #174135; }
+.browser-copy-status { min-height: 1.4em; margin: 12px 0 0 !important; color: #174135 !important; font-weight: 700; }
+body.browser-unsupported { overflow: hidden; }
 @media (max-width: 480px) {
-  .pwa-site-nav { justify-content: stretch; }
-  .pwa-site-nav a { flex: 1; justify-content: center; padding: 0 6px; }
+  .site-nav { justify-content: stretch; }
+  .site-nav a { flex: 1; justify-content: center; padding: 0 6px; }
 }
