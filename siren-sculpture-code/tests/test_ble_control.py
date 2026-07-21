@@ -139,6 +139,7 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
                     "normal_paused": False,
                     "volume_percent": 80,
                     "sync_at": 1783703700,
+                    "cmd": "0123456789ab",
                 "playback_window": {
                     "enabled": True,
                     "start_time": "08:00",
@@ -161,12 +162,19 @@ def test_status_response_stays_within_ble_read_limit(monkeypatch: pytest.MonkeyP
     assert len(response) <= MAX_BLE_JSON_BYTES
     assert "status" in payload
     assert payload["status"]["audio"]["sync_at"] == 1783703700
+    assert payload["status"]["audio"]["cmd"] == "0123456789ab"
 
 
 def test_compact_audio_status_converts_sync_time_to_epoch() -> None:
-    compact = _compact_audio_status({"sync_restart_at": "2026-07-10T11:15:00-06:00"})
+    compact = _compact_audio_status({
+        "sync_restart_at": "2026-07-10T11:15:00-06:00",
+        "last_command_id": "command-1",
+        "last_command": "test_play",
+    })
 
     assert compact["sync_at"] == 1783703700
+    assert compact["cmd"] == "command-1"
+    assert "last_command" not in compact
 
 
 def test_status_read_uses_cache_without_collecting_hardware_status(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -462,13 +470,16 @@ def test_mode_commands_queue_explicit_modes(monkeypatch: pytest.MonkeyPatch) -> 
             return values.get(key, default)
 
     queued = []
-    monkeypatch.setattr("siren_app.ble_control.queue_command", lambda command: queued.append(command))
+    def queue(command: str) -> str:
+        queued.append(command)
+        return f"command-{len(queued)}"
+    monkeypatch.setattr("siren_app.ble_control.queue_command", queue)
     service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
 
-    assert service._handle_command({"action": "testing_mode"}) == {"ok": True, "queued": "testing_mode"}
-    assert service._handle_command({"action": "sculpture_mode"}) == {"ok": True, "queued": "sculpture_mode"}
-    assert service._handle_command({"action": "play_sculpture"}) == {"ok": True, "queued": "play_sculpture"}
-    assert service._handle_command({"action": "test_restart"}) == {"ok": True, "queued": "test_restart"}
+    assert service._handle_command({"action": "testing_mode"}) == {"ok": True, "queued": "testing_mode", "command_id": "command-1"}
+    assert service._handle_command({"action": "sculpture_mode"}) == {"ok": True, "queued": "sculpture_mode", "command_id": "command-2"}
+    assert service._handle_command({"action": "play_sculpture"}) == {"ok": True, "queued": "play_sculpture", "command_id": "command-3"}
+    assert service._handle_command({"action": "test_restart"}) == {"ok": True, "queued": "test_restart", "command_id": "command-4"}
     assert queued == ["testing_mode", "sculpture_mode", "play_sculpture", "test_restart"]
 
 
@@ -484,7 +495,10 @@ def test_set_playback_window_queues_payload(monkeypatch: pytest.MonkeyPatch) -> 
             return values.get(key, default)
 
     queued = []
-    monkeypatch.setattr("siren_app.ble_control.queue_command", lambda command: queued.append(command))
+    def queue(command: str) -> str:
+        queued.append(command)
+        return "window-command"
+    monkeypatch.setattr("siren_app.ble_control.queue_command", queue)
     service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
 
     response = service._handle_command({"action": "set_playback_window", "start_time": "8:00", "stop_time": "21:00"})
@@ -492,6 +506,7 @@ def test_set_playback_window_queues_payload(monkeypatch: pytest.MonkeyPatch) -> 
     assert response == {
         "ok": True,
         "queued": "set_playback_window",
+        "command_id": "window-command",
         "playback_window": {"enabled": True, "start_time": "08:00", "stop_time": "21:00"},
     }
     assert queued == ['playback_window:{"enabled":true,"start_time":"08:00","stop_time":"21:00"}']
@@ -508,12 +523,16 @@ def test_clear_playback_window_queues_disabled_payload(monkeypatch: pytest.Monke
             return values.get(key, default)
 
     queued = []
-    monkeypatch.setattr("siren_app.ble_control.queue_command", lambda command: queued.append(command))
+    def queue(command: str) -> str:
+        queued.append(command)
+        return "clear-command"
+    monkeypatch.setattr("siren_app.ble_control.queue_command", queue)
     service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
 
     assert service._handle_command({"action": "clear_playback_window"}) == {
         "ok": True,
         "queued": "clear_playback_window",
+        "command_id": "clear-command",
         "playback_window": {"enabled": False},
     }
     assert queued == ['playback_window:{"enabled":false}']
@@ -535,12 +554,16 @@ def test_set_volume_queues_volume_command(monkeypatch: pytest.MonkeyPatch) -> No
             return values.get(key, default)
 
     queued = []
-    monkeypatch.setattr("siren_app.ble_control.queue_command", lambda command: queued.append(command))
+    def queue(command: str) -> str:
+        queued.append(command)
+        return "volume-command"
+    monkeypatch.setattr("siren_app.ble_control.queue_command", queue)
     service = SirenBleControlService(FakeConfig())  # type: ignore[arg-type]
 
     assert service._handle_command({"action": "set_volume", "volume_percent": 42}) == {
         "ok": True,
         "queued": "set_volume",
+        "command_id": "volume-command",
         "volume_percent": 42,
     }
     assert queued == ["volume:42"]

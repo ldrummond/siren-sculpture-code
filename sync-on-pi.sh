@@ -152,6 +152,89 @@ else
 fi
 DEPLOY_GROUP="$(id -gn "${DEPLOY_USER}")"
 
+hydrate_and_verify_lfs_audio() {
+  local relative_path
+  local absolute_path
+  local audio_count=0
+  local failed=0
+
+  if ! git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Cannot hydrate Git LFS audio because ${PROJECT_ROOT} is not a Git checkout." >&2
+    exit 1
+  fi
+
+  if ! git lfs version >/dev/null 2>&1; then
+    if ! command -v apt-get >/dev/null 2>&1; then
+      echo "git-lfs is required but was not found. Install it, then rerun sync-on-pi.sh." >&2
+      exit 1
+    fi
+    echo
+    echo "Git LFS is not installed; installing it before syncing audio."
+    "${SUDO[@]}" apt-get update
+    "${SUDO[@]}" apt-get install -y git-lfs
+  fi
+
+  echo
+  echo "-----------------------------------------------"
+  echo "Downloading and verifying Git LFS audio"
+  echo "-----------------------------------------------"
+  echo
+  git -C "${PROJECT_ROOT}" lfs install --local
+  if ! git -C "${PROJECT_ROOT}" lfs pull; then
+    echo "Git LFS download failed. Nothing has been copied to ${APP_DIR}." >&2
+    exit 1
+  fi
+  if ! git -C "${PROJECT_ROOT}" lfs fsck; then
+    echo "Git LFS integrity verification failed. Nothing has been copied to ${APP_DIR}." >&2
+    exit 1
+  fi
+
+  while IFS= read -r relative_path; do
+    case "${relative_path}" in
+      siren-sculpture-code/siren-app/assets/audio/*.wav|\
+      siren-sculpture-code/siren-app/assets/audio/*.mp3|\
+      siren-sculpture-code/siren-app/assets/audio/*.flac|\
+      siren-sculpture-code/siren-app/assets/audio/*.m4a)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+
+    audio_count=$((audio_count + 1))
+    absolute_path="${PROJECT_ROOT}/${relative_path}"
+    if [[ ! -s "${absolute_path}" ]]; then
+      echo "ERROR: LFS audio is missing or empty: ${relative_path}" >&2
+      failed=1
+      continue
+    fi
+    if head -c 200 "${absolute_path}" | grep -aq '^version https://git-lfs.github.com/spec/v1'; then
+      echo "ERROR: LFS audio is still a pointer file: ${relative_path}" >&2
+      failed=1
+      continue
+    fi
+    if ! git -C "${PROJECT_ROOT}" diff --quiet -- "${relative_path}"; then
+      echo "ERROR: Audio does not match the checked-in Git LFS object: ${relative_path}" >&2
+      failed=1
+    fi
+  done < <(git -C "${PROJECT_ROOT}" lfs ls-files --name-only)
+
+  if (( audio_count == 0 )); then
+    echo "ERROR: No Git LFS audio files were found in siren-app/assets/audio." >&2
+    echo "Check .gitattributes and confirm the audio files are committed with Git LFS." >&2
+    exit 1
+  fi
+  if (( failed != 0 )); then
+    echo "Git LFS audio validation failed. Nothing has been copied to ${APP_DIR}." >&2
+    echo "Try 'git lfs pull' again and confirm the checkout is clean before retrying." >&2
+    exit 1
+  fi
+
+  echo "Verified ${audio_count} hydrated Git LFS audio file(s)."
+}
+
+hydrate_and_verify_lfs_audio
+
 RSYNC_EXCLUDES=(
   "--exclude=.git/"
   "--exclude=.venv/"

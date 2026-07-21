@@ -249,6 +249,7 @@ let pendingVolume = null;
 let volumeConfirmationTimer = null;
 let scheduledSyncAt = null;
 let operationQueue = Promise.resolve();
+const COMMAND_CONFIRMATION_TIMEOUT_MS = 15000;
 
 function setBusy(isBusy, message = '') {
   pendingRequests = Math.max(0, pendingRequests + (isBusy ? 1 : -1));
@@ -257,6 +258,10 @@ function setBusy(isBusy, message = '') {
   document.getElementById('activityRow').setAttribute('aria-busy', String(busy));
   document.getElementById('activityText').textContent = busy ? (message || 'Waiting for Pi response...') : 'Idle';
   updateButtonStates();
+}
+
+function setBusyMessage(message) {
+  if (pendingRequests > 0) document.getElementById('activityText').textContent = message;
 }
 
 function setConnection(value) {
@@ -358,10 +363,34 @@ async function sendCommand(action, payload = {}) {
     }
     applyCommandResponse(action, payload, response);
     log(response);
-    if (action !== 'diagnostics' && action !== 'reboot') {
+    if (response && response.queued && action !== 'reboot') {
+      if (!response.command_id) {
+        throw new Error('Pi queued the command without a confirmation ID. Redeploy and restart the BLE service.');
+      }
+      const confirmedStatus = await waitForCommandConfirmation(response.command_id, action);
+      log(confirmedStatus);
+    } else if (action !== 'diagnostics' && action !== 'reboot') {
       window.setTimeout(() => refreshStatus().catch(() => {}), 5500);
     }
   });
+}
+
+async function waitForCommandConfirmation(commandId, action) {
+  const startedAt = Date.now();
+  setBusyMessage(`Waiting for ${formatAction(action)} to finish...`);
+  while (Date.now() - startedAt < COMMAND_CONFIRMATION_TIMEOUT_MS) {
+    await sleep(750);
+    const status = await readStatus();
+    updateFromStatus(status);
+    const published = status && status.status ? status.status : status;
+    const audio = published && published.audio ? published.audio : {};
+    if (audio.cmd === commandId) {
+      if (audio.error) throw new Error(audio.error);
+      return status;
+    }
+  }
+  lastAction = null;
+  throw new Error(`${formatAction(action)} was queued but not confirmed within 15 seconds.`);
 }
 
 function applyCommandResponse(action, payload, response) {

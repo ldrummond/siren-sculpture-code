@@ -145,16 +145,26 @@ class SirenBleControlService:
             return {"ok": True, "queued": "reboot", "message": "device reboot requested"}
         if action == "set_volume":
             volume = _command_volume(command)
-            queue_command(f"volume:{volume}")
-            return {"ok": True, "queued": "set_volume", "volume_percent": volume}
+            command_id = queue_command(f"volume:{volume}")
+            return {"ok": True, "queued": "set_volume", "command_id": command_id, "volume_percent": volume}
         if action == "set_playback_window":
             payload = _playback_window_payload(command)
-            queue_command(playback_window_command(payload))
-            return {"ok": True, "queued": "set_playback_window", "playback_window": payload}
+            command_id = queue_command(playback_window_command(payload))
+            return {
+                "ok": True,
+                "queued": "set_playback_window",
+                "command_id": command_id,
+                "playback_window": payload,
+            }
         if action == "clear_playback_window":
             payload = {"enabled": False}
-            queue_command(playback_window_command(payload))
-            return {"ok": True, "queued": "clear_playback_window", "playback_window": payload}
+            command_id = queue_command(playback_window_command(payload))
+            return {
+                "ok": True,
+                "queued": "clear_playback_window",
+                "command_id": command_id,
+                "playback_window": payload,
+            }
         audio_actions = {
             "testing_mode",
             "sculpture_mode",
@@ -165,8 +175,8 @@ class SirenBleControlService:
             "pause_sculpture",
         }
         if action in audio_actions:
-            queue_command(action)
-            return {"ok": True, "queued": action}
+            command_id = queue_command(action)
+            return {"ok": True, "queued": action, "command_id": command_id}
         raise ValueError(f"unsupported action: {action}")
 
     def _start_clock_sync(self, epoch_seconds: float) -> dict[str, Any]:
@@ -276,6 +286,8 @@ def _compact_wittypi_status(wittypi: dict[str, Any]) -> dict[str, Any]:
 
 def _compact_audio_status(audio: dict[str, Any]) -> dict[str, Any]:
     compact = {key: audio.get(key) for key in AUDIO_STATUS_KEYS if key in audio}
+    if audio.get("last_command_id"):
+        compact["cmd"] = audio["last_command_id"]
     sync_restart_at = audio.get("sync_restart_at")
     if isinstance(sync_restart_at, str):
         try:

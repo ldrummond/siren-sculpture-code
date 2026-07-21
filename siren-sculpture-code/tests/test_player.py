@@ -75,18 +75,25 @@ def test_build_command_uses_selected_alsa_device(tmp_path: Path, monkeypatch) ->
 def test_queue_command_accepts_mode_controls_and_volume(tmp_path: Path, monkeypatch) -> None:
     command_file = tmp_path / "command"
     monkeypatch.setattr("siren_app.player.COMMAND_FILE", command_file)
+    command_ids = iter(("first-command", "rejected-command", "second-command"))
+    monkeypatch.setattr(player_module.secrets, "token_hex", lambda _length: next(command_ids))
 
-    queue_command("testing_mode")
-    assert command_file.read_text(encoding="utf-8") == "testing_mode\n"
+    command_id = queue_command("testing_mode")
+    assert json.loads(command_file.read_text(encoding="utf-8")) == {
+        "id": command_id,
+        "command": "testing_mode",
+    }
 
-    queue_command("play_sculpture")
-    assert command_file.read_text(encoding="utf-8") == "play_sculpture\n"
+    with pytest.raises(ValueError, match="another audio command is still pending"):
+        queue_command("play_sculpture")
 
-    queue_command("test_restart")
-    assert command_file.read_text(encoding="utf-8") == "test_restart\n"
+    queued = player_module._read_command()
+    assert queued == player_module.QueuedAudioCommand(command_id, "testing_mode")
+    player_module._complete_command(queued)
+    assert not command_file.exists()
 
-    queue_command("volume:55")
-    assert command_file.read_text(encoding="utf-8") == "volume:55\n"
+    next_command_id = queue_command("volume:55")
+    assert next_command_id == "second-command"
 
 
 def test_read_playback_window_defaults_to_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -148,9 +155,12 @@ def test_queue_command_accepts_playback_window_payload(tmp_path: Path, monkeypat
     monkeypatch.setattr("siren_app.player.COMMAND_FILE", command_file)
 
     command = playback_window_command({"enabled": True, "start_time": "08:00", "stop_time": "21:00"})
-    queue_command(command)
+    command_id = queue_command(command)
 
-    assert command_file.read_text(encoding="utf-8") == command + "\n"
+    assert json.loads(command_file.read_text(encoding="utf-8")) == {
+        "id": command_id,
+        "command": command,
+    }
 
 
 def test_clock_trust_requires_runtime_marker_when_wittypi_is_enabled(tmp_path: Path, monkeypatch) -> None:
@@ -215,6 +225,80 @@ def test_next_sculpture_sync_boundary_rejects_disabled_interval() -> None:
 def test_next_sculpture_sync_boundary_rejects_negative_lead_time() -> None:
     with pytest.raises(ValueError, match="lead time cannot be negative"):
         next_sculpture_sync_boundary(0, 300, -1)
+
+
+def test_autoplay_publishes_acknowledgement_before_completing_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StopSupervisor(Exception):
+        pass
+
+    class FakePlayer:
+        def __init__(self, _config: object):
+            self.running = False
+            self.volume_percent = 80
+
+        def resume(self) -> bool:
+            self.running = True
+            return True
+
+        def start(self) -> bool:
+            self.running = True
+            return True
+
+        def stop(self) -> None:
+            self.running = False
+
+        def pause(self) -> None:
+            self.running = False
+
+        def restart(self) -> bool:
+            self.running = True
+            return True
+
+        def set_volume(self, volume: int) -> bool:
+            self.volume_percent = volume
+            return True
+
+        def is_running(self) -> bool:
+            return self.running
+
+        def check_process(self) -> None:
+            return None
+
+        def status(self) -> object:
+            state = "playing" if self.running else "stopped"
+            return SimpleNamespace(as_dict=lambda: {"state": state, "file": "audio.wav"})
+
+    queued = player_module.QueuedAudioCommand("abc123", "test_play")
+    statuses: list[dict[str, object]] = []
+    completed: list[player_module.QueuedAudioCommand] = []
+    commands = iter((queued,))
+
+    monkeypatch.setattr(player_module, "load_config", lambda: FakeConfig({
+        "audio.sculpture_sync_interval_seconds": 0,
+        "audio.sculpture_sync_lead_time_seconds": 0,
+    }))
+    monkeypatch.setattr(player_module, "setup_logging", lambda _config: None)
+    monkeypatch.setattr(player_module, "AudioPlayer", FakePlayer)
+    monkeypatch.setattr(player_module, "_read_command", lambda: next(commands, None))
+    monkeypatch.setattr(player_module, "_complete_command", completed.append)
+    monkeypatch.setattr(player_module, "read_playback_window", lambda _config: {"enabled": False, "active": False})
+    monkeypatch.setattr(player_module, "is_clock_trusted", lambda _config: True)
+    monkeypatch.setattr(player_module, "_write_status", lambda status: statuses.append(dict(status)))
+    monkeypatch.setattr(player_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(player_module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopSupervisor))
+    monkeypatch.setattr(player_module, "COMMAND_FILE", tmp_path / "command")
+    monkeypatch.setattr(player_module, "STATUS_FILE", tmp_path / "status.json")
+
+    with pytest.raises(StopSupervisor):
+        player_module.run_autoplay()
+
+    assert statuses[-1]["last_command_id"] == "abc123"
+    assert statuses[-1]["last_command"] == "test_play"
+    assert statuses[-1]["state"] == "playing"
+    assert completed == [queued]
 
 
 @pytest.mark.parametrize(

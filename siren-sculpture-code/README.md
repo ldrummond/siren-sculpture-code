@@ -114,6 +114,11 @@ Sculpture mode is the normal field mode: playback follows the runtime playback w
 
 The `diagnostics` command returns compact service states and recent warnings for light field debugging over Bluetooth.
 
+Audio-changing commands use one in-flight command slot. A new command is
+rejected until the audio supervisor applies the current command and publishes
+its confirmation. The web controller disables the full interface while it
+waits for that confirmation, with a 15-second timeout.
+
 `set_wifi_power` accepts an `enabled` boolean and changes Wi-Fi power in a
 background worker so BLE requests remain responsive. Poll `wifi_power_status`
 until it returns `success` or `error`. Turning Wi-Fi off disconnects SSH and

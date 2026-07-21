@@ -54,7 +54,6 @@ deploy it with:
 
 ```bash
 git pull --ff-only
-git lfs pull
 ./sync-on-pi.sh
 ```
 
@@ -63,7 +62,9 @@ git lfs pull
 `/opt/sculpture/vendor/rpi-ble-wifi-provisioning`, then presents the same
 initializer and installer prompts as `sync-to-pi.sh`. Clone the repository
 outside `/opt/sculpture` so the Git checkout remains separate from the deployed
-runtime files.
+runtime files. Before copying, it installs Git LFS if needed, runs `git lfs
+pull`, verifies LFS object integrity, and refuses to deploy missing, modified,
+or unresolved pointer audio files.
 
 Audio files are tracked through Git LFS and are always included when the
 hydrated checkout is copied into `/opt/sculpture`. The Pi initializer and

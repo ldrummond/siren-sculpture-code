@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -49,6 +50,12 @@ class PlayerStatus:
             "volume_percent": self.volume_percent,
             "error": self.error,
         }
+
+
+@dataclass(frozen=True)
+class QueuedAudioCommand:
+    command_id: str | None
+    command: str
 
 
 
@@ -344,6 +351,8 @@ def run_autoplay() -> int:
     normal_paused = False
     sync_restart_requested = True
     sync_restart_at: float | None = None
+    last_command_id: str | None = None
+    last_command: str | None = None
     sync_interval_seconds = int(config.get("audio.sculpture_sync_interval_seconds", 300) or 0)
     sync_lead_time_seconds = int(config.get("audio.sculpture_sync_lead_time_seconds", 120) or 0)
     COMMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -360,7 +369,8 @@ def run_autoplay() -> int:
     logger.info("Sculpture audio supervisor started")
 
     while not stopping:
-        command = _read_command()
+        queued_command = _read_command()
+        command = queued_command.command if isinstance(queued_command, QueuedAudioCommand) else queued_command
         if command:
             logger.info("Received audio command: %s", command)
             if command == "testing_mode":
@@ -498,7 +508,15 @@ def run_autoplay() -> int:
             if sync_restart_at is not None
             else None
         )
+        if isinstance(queued_command, QueuedAudioCommand) and queued_command.command_id:
+            last_command_id = queued_command.command_id
+            last_command = queued_command.command
+        if last_command_id:
+            status["last_command_id"] = last_command_id
+            status["last_command"] = last_command
         _write_status(status)
+        if isinstance(queued_command, QueuedAudioCommand):
+            _complete_command(queued_command)
         sleep_seconds = 5.0
         if sync_restart_at is not None:
             sleep_seconds = max(0.05, min(sleep_seconds, sync_restart_at - time.time()))
@@ -509,7 +527,7 @@ def run_autoplay() -> int:
     return 0
 
 
-def queue_command(command: str) -> None:
+def queue_command(command: str) -> str:
     allowed_commands = {
         "testing_mode",
         "sculpture_mode",
@@ -522,7 +540,18 @@ def queue_command(command: str) -> None:
     if command not in allowed_commands and not command.startswith("volume:") and not command.startswith("playback_window:"):
         raise ValueError(f"Unsupported audio command: {command}")
     COMMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
-    COMMAND_FILE.write_text(command + "\n", encoding="utf-8")
+    command_id = secrets.token_hex(6)
+    payload = json.dumps({"id": command_id, "command": command}, separators=(",", ":")) + "\n"
+    temporary_file = COMMAND_FILE.with_name(f".{COMMAND_FILE.name}.{command_id}.tmp")
+    try:
+        temporary_file.write_text(payload, encoding="utf-8")
+        try:
+            os.link(temporary_file, COMMAND_FILE)
+        except FileExistsError as exc:
+            raise ValueError("another audio command is still pending") from exc
+    finally:
+        temporary_file.unlink(missing_ok=True)
+    return command_id
 
 
 def read_published_status() -> dict[str, Any] | None:
@@ -534,16 +563,35 @@ def read_published_status() -> dict[str, Any] | None:
         return None
 
 
-def _read_command() -> str | None:
+def _read_command() -> QueuedAudioCommand | None:
     if not COMMAND_FILE.exists():
         return None
     try:
-        command = COMMAND_FILE.read_text(encoding="utf-8").strip()
-        COMMAND_FILE.unlink()
-        return command
+        raw = COMMAND_FILE.read_text(encoding="utf-8").strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return QueuedAudioCommand(None, raw)
+        if not isinstance(payload, dict) or not isinstance(payload.get("command"), str):
+            raise ValueError("audio command file has an invalid payload")
+        command_id = payload.get("id")
+        return QueuedAudioCommand(str(command_id) if command_id else None, payload["command"])
+    except ValueError as exc:
+        logger.warning("Discarding invalid command file %s: %s", COMMAND_FILE, exc)
+        COMMAND_FILE.unlink(missing_ok=True)
+        return None
     except OSError as exc:
         logger.warning("Unable to read command file %s: %s", COMMAND_FILE, exc)
         return None
+
+
+def _complete_command(queued_command: QueuedAudioCommand) -> None:
+    try:
+        current = _read_command()
+        if current == queued_command:
+            COMMAND_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Unable to complete command file %s: %s", COMMAND_FILE, exc)
 
 
 def _write_status(status: dict[str, Any]) -> None:
