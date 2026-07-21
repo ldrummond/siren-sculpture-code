@@ -1,14 +1,17 @@
 #!/bin/sh
 
-# This file is sourced by /etc/profile for interactive SSH sessions. Keep it
-# POSIX-compatible because /etc/profile can be read by shells other than Bash.
+# This file is sourced by /etc/profile for interactive SSH and Raspberry Pi
+# Connect remote-shell sessions. Keep it POSIX-compatible because /etc/profile
+# can be read by shells other than Bash.
 _sculpture_login_banner() {
   if [ "${SCULPTURE_BANNER_FORCE:-0}" != "1" ]; then
     case "$-" in
       *i*) ;;
       *) return 0 ;;
     esac
-    [ -n "${SSH_CONNECTION:-}" ] || return 0
+    if [ -z "${SSH_CONNECTION:-}" ] && [ -z "${CONNECT_TTY:-}" ]; then
+      return 0
+    fi
   fi
 
   _sculpture_repo_link="${SCULPTURE_REPO_LINK:-/etc/sculpture-repo}"

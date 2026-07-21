@@ -121,8 +121,9 @@ The same tool supports quick commands such as `sculpture-control status`,
 `sculpture-control test-restart`. It is installed into `/usr/local/bin` by both
 the fresh initializer and regular install script.
 
-Interactive SSH logins also display the Pi hostname, a reminder about
-`sculpture-control`, and the Git checkout's update status. `sync-on-pi.sh`
+Interactive SSH and Raspberry Pi Connect remote-shell sessions also display the
+Pi hostname, a reminder about `sculpture-control`, and the Git checkout's update
+status. Connect sessions are detected through `CONNECT_TTY`. `sync-on-pi.sh`
 records the checkout location during deployment. The check fetches the current
 branch's upstream with a five-second timeout; when the Pi is offline it reports
 the remote status as unknown without blocking the login indefinitely. When the

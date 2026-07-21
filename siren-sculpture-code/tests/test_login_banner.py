@@ -15,6 +15,14 @@ def test_ssh_banner_has_welcome_control_and_repository_messages() -> None:
     assert "the Pi may be offline" in script
 
 
+def test_banner_recognizes_ssh_and_raspberry_pi_connect_remote_shells() -> None:
+    script = BANNER.read_text(encoding="utf-8")
+
+    assert '${SSH_CONNECTION:-}' in script
+    assert '${CONNECT_TTY:-}' in script
+    assert 'case "$-"' in script
+
+
 def test_stale_checkout_instructions_use_valid_safe_git_commands() -> None:
     script = BANNER.read_text(encoding="utf-8")
 
